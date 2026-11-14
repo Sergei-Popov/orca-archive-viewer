@@ -6,3 +6,24 @@ All notable changes to this plugin are documented here. The format follows
 `[Unreleased]` into the released version.
 
 ## [Unreleased]
+
+### Added
+
+- Archive Viewer editor for `.zip`, `.jar`, `.war`, `.ear`, `.aar`, `.apk`, `.whl`, `.nupkg`,
+  `.vsix`, `.xpi`, `.ipa`, `.epub`, `.tar`, `.gz`, `.tgz`, `.bz2`, `.tbz2`, `.tbz`, `.xz`,
+  `.txz`, `.zst` and `.tzst`; formats are recognised by their bytes, 7-Zip, RAR, lzip, `.Z` and
+  `.cab` get a clear "not supported" message.
+- ZIP: end record search with self-extracting prefixes, ZIP64, data descriptors, Unix modes and
+  symlinks, Info-ZIP Unicode paths and extended timestamps, NTFS times; stored, Deflate, bzip2
+  and Zstandard entries with a CRC-32 check; encrypted and other methods are named, not unpacked.
+- TAR: ustar, GNU long names and links, PAX headers, base-256 sizes, symbolic and hard links;
+  GZIP (several members), bzip2, XZ and Zstandard streams, with the tar inside or a single file
+  named from the GZIP header. Unpacking stops at 512 MB.
+- Names without UTF-8 marking in CP437, CP866 (default for a Russian UI) or Windows-1251,
+  switchable in the toolbar.
+- Virtualized file tree with size, packed and date columns; filter (`⌘F` / `Ctrl+F`), expand
+  and collapse all, summary with the compression ratio, keyboard navigation.
+- Preview: text with line numbers and wrapping, images, hex dump, details (method, date,
+  permissions, CRC-32, link target); archives inside archives open in place with a trail back;
+  Save… through Orca's save dialog and Copy path. The README is selected on opening.
+- English and Russian UI, Orca's light and dark themes, plugin and tab icons.
