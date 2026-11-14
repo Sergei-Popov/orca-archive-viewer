@@ -4,13 +4,14 @@
 
 import { type Archive, type Entry, EntryError, type ReadResult } from './archive/model'
 import { LEGACY_ENCODINGS, type LegacyEncoding } from './archive/names'
-import { MAX_UNPACKED, NotArchiveError, UnsupportedFormatError, isArchive, openArchive } from './archive/open'
-import { DamagedError, TooLargeError } from './codecs/sink'
+import { NotArchiveError, UnsupportedFormatError, isArchive, openArchive } from './archive/open'
+import { DamagedError, TooLargeError, UnsupportedDataError, type UnsupportedFeature } from './codecs/sink'
 import { type ContentKind, IMAGE_TYPES, classify, extension, hexDump, imageType, nameKind } from './content'
 import { formatBytes, formatCrc, formatDate, formatMode, formatRatio, formatShortDate, formatSize } from './display'
 import { append, h, highlight, svg } from './dom'
 import { type Strings, fill } from './i18n'
 import { type IconName, icon } from './icons'
+import { TooDeepError, autoOpens, heldBytes, nestedLimit } from './nesting'
 import {
   type Node as TreeNode,
   type Row,
@@ -46,6 +47,8 @@ type Level = {
   filter: string
   scrollTop: number
   dates: boolean
+  /** Bytes this level keeps in memory besides the document Orca passed in. */
+  held: number
 }
 
 type SaveAs = (options: {
@@ -87,10 +90,13 @@ function storageSet(key: string, value: string | null): void {
 export function describeOpenError(error: unknown, t: Strings, locale: string): string {
   if (error instanceof UnsupportedFormatError) return fill(t.unsupported, { format: error.format })
   if (error instanceof NotArchiveError) return t.notArchive
-  if (error instanceof TooLargeError) return fill(t.tooLarge, { size: formatSize(MAX_UNPACKED, locale, t.units) })
+  if (error instanceof TooLargeError) return fill(t.tooLarge, { size: formatSize(error.limit, locale, t.units) })
+  if (error instanceof UnsupportedDataError) return t.features[error.feature]
+  if (error instanceof TooDeepError) return fill(t.tooDeep, { n: String(error.levels) })
   if (error instanceof EntryError) {
     if (error.code === 'encrypted') return t.encrypted
     if (error.code === 'method') return fill(t.unsupportedMethod, { method: error.detail })
+    if (error.code === 'unsupported') return t.features[error.detail as UnsupportedFeature] ?? t.damagedArchive
   }
   if (error instanceof DamagedError) return t.damagedArchive
   return t.damagedArchive
@@ -129,6 +135,7 @@ export class ArchiveView {
   private readonly expandButton: HTMLButtonElement
   private readonly collapseButton: HTMLButtonElement
   private readonly notice: HTMLDivElement
+  private readonly noticeText: HTMLSpanElement
   private readonly main: HTMLDivElement
   private readonly tree: HTMLElement
   private readonly scroll: HTMLDivElement
@@ -188,7 +195,8 @@ export class ArchiveView {
       this.expandButton,
       this.collapseButton
     )
-    this.notice = h('div', { className: 'av-notice', role: 'status' }, svg(icon('warning')), t.damaged)
+    this.noticeText = h('span', {}, t.damaged)
+    this.notice = h('div', { className: 'av-notice', role: 'status' }, svg(icon('warning')), this.noticeText)
 
     const cols = h(
       'div',
@@ -247,6 +255,7 @@ export class ArchiveView {
   show(archive: Archive): void {
     const previous = this.levels[0]
     const level = this.newLevel(archive, this.t.archive, !previous)
+    level.held = heldBytes(archive, 0)
     if (previous) {
       for (const path of previous.expanded) {
         if (findNode(level.root, path)?.dir) level.expanded.add(path)
@@ -264,7 +273,7 @@ export class ArchiveView {
 
   /** A compressed archive (`bundle.zip.gz`) opens straight into the archive inside it. */
   private autoOpen(level: Level): void {
-    if (level.archive.kind !== 'single' || this.level !== level) return
+    if (!autoOpens(this.levels.length, level.archive) || this.level !== level) return
     const node = level.root.children[0]
     if (!node?.entry || node.dir) return
     try {
@@ -285,7 +294,8 @@ export class ArchiveView {
       selected: null,
       filter: '',
       scrollTop: 0,
-      dates: archive.entries.some((entry) => entry.mtime !== undefined)
+      dates: archive.entries.some((entry) => entry.mtime !== undefined),
+      held: 0
     }
     if (fresh) {
       // One folder at the top (a typical .tar.gz or GitHub zip): open it.
@@ -352,6 +362,8 @@ export class ArchiveView {
     this.encodingField.hidden = !archive.legacyNames
     this.encodingSelect.value = archive.encoding
     this.notice.hidden = !archive.damaged
+    // A damaged .gz of one file shows the part of that file that came before the damage.
+    this.noticeText.textContent = archive.kind === 'single' ? t.damagedFile : t.damaged
     const folders = root.folders > 0
     this.expandButton.disabled = !folders
     this.collapseButton.disabled = !folders
@@ -1002,6 +1014,10 @@ export class ArchiveView {
         return this.callout('warning', 'av-warn', fill(t.unsupportedMethod, { method: error.detail || entry.method || '?' }))
       }
       if (error.code === 'missing') return this.callout('link', 'av-warn', t.missing)
+      if (error.code === 'unsupported') {
+        const text = t.features[error.detail as UnsupportedFeature]
+        if (text) return this.callout('warning', 'av-warn', text)
+      }
     }
     console.warn('[archive-viewer] cannot unpack', entry.path, error)
     return this.callout('warning', 'av-danger', t.damagedEntry)
@@ -1022,19 +1038,26 @@ export class ArchiveView {
     try {
       // Let "Opening…" paint before a big archive is unpacked on this thread.
       if (wait) await pause()
-      const result = level.archive.read(entry, MAX_UNPACKED)
-      if (result.truncated) throw new TooLargeError(MAX_UNPACKED)
-      const archive = await openArchive(result.bytes, { encoding: this.encoding, name: node.name })
+      const held = this.levels.reduce((sum, item) => sum + item.held, 0)
+      const budget = nestedLimit(this.levels.length, held)
+      const result = level.archive.read(entry, budget)
+      if (result.truncated) throw new TooLargeError(budget)
+      const archive = await openArchive(result.bytes, {
+        encoding: this.encoding,
+        name: node.name,
+        limit: budget - result.bytes.length
+      })
       if (this.level !== level) return
       level.selected = node.path
       level.scrollTop = this.scroll.scrollTop
       const next = this.newLevel(archive, node.name, true)
+      next.held = heldBytes(archive, result.bytes.length)
       this.levels.push(next)
       this.renderLevel(true)
-      queueMicrotask(() => this.autoOpen(next))
     } catch (error) {
       if (this.level !== level || level.selected !== node.path) return
-      if (!(error instanceof UnsupportedFormatError || error instanceof NotArchiveError || error instanceof TooLargeError)) {
+      const expected = [UnsupportedFormatError, NotArchiveError, TooLargeError, TooDeepError, UnsupportedDataError]
+      if (!expected.some((type) => error instanceof type)) {
         console.warn('[archive-viewer] cannot open nested archive', node.path, error)
       }
       const message = this.callout('warning', 'av-danger', this.t.errorTitle, describeOpenError(error, this.t, this.locale))

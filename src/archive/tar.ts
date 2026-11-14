@@ -59,22 +59,28 @@ export function parsePax(data: Uint8Array): Record<string, string> {
   return out
 }
 
-/** `archiveSize`: the file's own size when the tar came out of a compressed stream. */
+/** `archiveSize` and `streamDamaged`: the file's own size, and damage found while unpacking it,
+ *  when the tar came out of a compressed stream. */
 export function parseTar(
   bytes: Uint8Array,
   encoding: LegacyEncoding,
   format = 'TAR',
-  archiveSize = bytes.length
+  archiveSize = bytes.length,
+  streamDamaged = false
 ): Archive {
   const raws: Raw[] = []
   let globalPax: Record<string, string> = {}
   let pax: Record<string, string> = {}
   let longName: Uint8Array | null = null
   let longLink: Uint8Array | null = null
-  let damaged = false
+  let damaged = streamDamaged
+  let ended = false
   let at = 0
   while (at + 512 <= bytes.length) {
-    if (isZeroBlock(bytes, at)) break
+    if (isZeroBlock(bytes, at)) {
+      ended = true
+      break
+    }
     if (!tarChecksumOk(bytes, at)) {
       damaged = true
       break
@@ -83,10 +89,21 @@ export function parseTar(
     const gnu = ustar && bytes[at + 262] === 0x20 // "ustar  \0": old GNU, no prefix field
     const type = String.fromCharCode(bytes[at + 156] || 0x30)
     const headerPax = { ...globalPax, ...pax }
-    const size = headerPax.size !== undefined ? Number(headerPax.size) : tarNumber(bytes, at + 124, 12)
+    let size = tarNumber(bytes, at + 124, 12)
+    if (headerPax.size !== undefined) {
+      // Only digits: Number('') is 0 and Number('abc') is NaN, which would end the loop silently.
+      const paxSize = /^\d{1,15}$/.test(headerPax.size) ? Number(headerPax.size) : NaN
+      if (Number.isSafeInteger(paxSize)) size = paxSize
+      else damaged = true
+    }
+    if (!Number.isSafeInteger(size) || size < 0) {
+      damaged = true
+      break
+    }
     const dataStart = at + 512
     const next = dataStart + Math.ceil(size / 512) * 512
-    if (dataStart + size > bytes.length) {
+    const cut = dataStart + size > bytes.length
+    if (cut) {
       damaged = true
     }
     const data = bytes.subarray(dataStart, Math.min(bytes.length, dataStart + size))
@@ -126,9 +143,11 @@ export function parseTar(
       longLink = null
       pax = {}
     }
-    if (damaged) break
+    if (cut) break
     at = next
   }
+  // Bytes left over that are not a whole header, with no end-of-archive block: cut off mid-header.
+  if (!ended && at < bytes.length && !damaged) damaged = true
   return build(bytes, raws, encoding, format, damaged, archiveSize)
 }
 

@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { pax, tar, utf8 } from '../fixtures/build'
+import { concat, pax, tar, tarHeader, utf8 } from '../fixtures/build'
 import { base64, smallTarBz2, smallTarXz, smallTarZst } from '../fixtures/samples'
 import { EntryError } from './model'
 import { openArchive } from './open'
@@ -91,4 +91,29 @@ test('tar inside bzip2, xz and zstd', async () => {
     assert.deepEqual(archive.entries.map((e) => e.path), ['docs', 'docs/readme.txt'])
     assert.equal(text(archive.read(archive.entries[1], 100).bytes), 'hello from tar\n')
   }
+})
+
+test('a PAX size that is not a plain number falls back to the header size and marks damage', () => {
+  for (const size of ['abc', '', '1e3', '-5', ' 3']) {
+    const archive = parseTar(
+      tar([pax({ size }), { name: 'a.txt', data: utf8('aaa') }, { name: 'b.txt', data: utf8('bbb') }]),
+      'cp437'
+    )
+    assert.equal(archive.damaged, true, `size=${JSON.stringify(size)}`)
+    assert.deepEqual(archive.entries.map((e) => [e.path, e.size]), [['a.txt', 3], ['b.txt', 3]])
+    assert.equal(text(archive.read(archive.entries[1], 100).bytes), 'bbb')
+  }
+  const good = parseTar(tar([pax({ size: '3' }), { name: 'a.txt', data: utf8('aaa') }]), 'cp437')
+  assert.equal(good.damaged, false)
+})
+
+test('a tar cut inside a header or inside data is damaged; one without end blocks is not', () => {
+  const first = tar([{ name: 'a.txt', data: utf8('aaa') }], { end: false })
+  const midHeader = parseTar(concat(first, tarHeader({ name: 'b.txt' }, 10).subarray(0, 100)), 'cp437')
+  assert.equal(midHeader.damaged, true)
+  assert.deepEqual(midHeader.entries.map((e) => e.path), ['a.txt'])
+  const midData = parseTar(concat(first, tarHeader({ name: 'b.txt' }, 1000), utf8('only this')), 'cp437')
+  assert.equal(midData.damaged, true)
+  assert.equal(parseTar(first, 'cp437').damaged, false)
+  assert.equal(parseTar(concat(tar([{ name: 'a.txt', data: utf8('aaa') }]), utf8('after the end')), 'cp437').damaged, false)
 })

@@ -35,7 +35,8 @@ export type ReadResult = {
   crcOk?: boolean
 }
 
-export type EntryErrorCode = 'encrypted' | 'method' | 'damaged' | 'directory' | 'missing'
+/** `unsupported`: valid data the viewer does not decode; `detail` is an `UnsupportedFeature`. */
+export type EntryErrorCode = 'encrypted' | 'method' | 'unsupported' | 'damaged' | 'directory' | 'missing'
 
 export class EntryError extends Error {
   readonly code: EntryErrorCode

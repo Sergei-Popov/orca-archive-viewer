@@ -68,3 +68,33 @@ test('renamedPaths maps files and folders to their names in another code page', 
   assert.equal(map.size, 2)
   assert.equal(map.has('same.txt'), false)
 })
+
+test('a filter over a folder of 200,000 matches returns them all', () => {
+  const many: Entry[] = Array.from({ length: 200000 }, (_, i) => file(i, `logs/day-${i}.txt`, 1))
+  const root = buildTree(many)
+  const rows = visibleRows(root, new Set(), 'day-')
+  assert.equal(rows.length, 200001)
+  assert.equal(rows[0].node.path, 'logs')
+  assert.equal(visibleRows(root, new Set(), 'day-19999').length, 1 + 11)
+  assert.equal(visibleRows(root, new Set(), 'nothing').length, 0)
+})
+
+test('folders nested 20,000 deep build, filter, expand and list without recursion', () => {
+  const depth = 20000
+  const deep: Entry[] = []
+  let path = ''
+  for (let d = 0; d < depth; d++) {
+    path += 'd/'
+    if (d % 1000 === 999) deep.push(file(d, `${path}x${d}.txt`, 1))
+  }
+  // The deepest file first, so every folder above it is made in one go.
+  deep.reverse()
+  const root = buildTree(deep)
+  assert.equal(root.files, 20)
+  assert.equal(root.folders, depth)
+  assert.equal(visibleRows(root, new Set(), 'x19999').length, depth + 1)
+  const all = folderPaths(root)
+  assert.equal(all.length, depth)
+  assert.equal(visibleRows(root, new Set(all), '').length, depth + 20)
+  assert.deepEqual(visibleRows(root, new Set(['d']), '').map((r) => r.node.path), ['d', 'd/d'])
+})

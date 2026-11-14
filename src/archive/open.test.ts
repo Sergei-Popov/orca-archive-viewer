@@ -1,7 +1,8 @@
 import { assert, test } from 'orca/testing'
 import { gzipSync } from '../../vendor/fflate/fflate.mjs'
-import { DamagedError } from '../codecs/sink'
+import { DamagedError, UnsupportedDataError } from '../codecs/sink'
 import { concat, tar, utf8, zip } from '../fixtures/build'
+import { base64, bigDictXz } from '../fixtures/samples'
 import { detect } from './detect'
 import { NotArchiveError, UnsupportedFormatError, innerName, isArchive, openArchive } from './open'
 
@@ -58,4 +59,26 @@ test('isArchive is true for archives and compressed streams only', () => {
   assert.equal(isArchive(zip([])), true)
   assert.equal(isArchive(gzipSync(utf8('x'))), true)
   assert.equal(isArchive(utf8('hello')), false)
+})
+
+test('damage found while unpacking GZIP marks the archive damaged and keeps what was read', async () => {
+  const tgz = gzipSync(tar([{ name: 'a.txt', data: utf8('kept') }]))
+  tgz[tgz.length - 8] ^= 1
+  const archive = await openArchive(tgz, { encoding: 'cp437' })
+  assert.equal(archive.format, 'TAR + GZIP')
+  assert.equal(archive.damaged, true)
+  assert.equal(text(archive.read(archive.entries[0], 100).bytes), 'kept')
+  const gz = gzipSync(utf8('a log line\n'.repeat(50)), { filename: 'app.log' })
+  const cut = await openArchive(gz.subarray(0, gz.length - 6), { encoding: 'cp437' })
+  assert.equal(cut.kind, 'single')
+  assert.equal(cut.damaged, true)
+  assert.equal(text(cut.read(cut.entries[0], 1 << 20).bytes), 'a log line\n'.repeat(50))
+  assert.equal((await openArchive(gzipSync(utf8('fine')), { encoding: 'cp437' })).damaged, false)
+})
+
+test('a valid XZ file the decoder cannot take is refused as unsupported', async () => {
+  await assert.rejects(
+    () => openArchive(base64(bigDictXz), { encoding: 'cp437' }),
+    (e: unknown) => e instanceof UnsupportedDataError && e.feature === 'xz-dictionary'
+  )
 })

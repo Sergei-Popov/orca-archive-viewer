@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { utf8, zip } from '../fixtures/build'
+import { concat, utf8, zip } from '../fixtures/build'
 import { EntryError } from './model'
 import { decodeLegacy } from './names'
 import { dosTime, parseZip } from './zip'
@@ -146,4 +146,20 @@ test('dosTime reads local date and time', () => {
   const d = new Date(ms ?? 0)
   assert.deepEqual([d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()], [2024, 11, 14, 13, 45, 30])
   assert.equal(dosTime(0, 0), undefined)
+})
+
+test('a Deflate entry longer than its declared size is damaged', () => {
+  const archive = parseZip(zip([{ name: 'bomb.txt', data: utf8('abc'.repeat(10000)), method: 8, size: 10 }]), 'cp437')
+  assert.equal(archive.entries[0].size, 10)
+  assert.throws(() => archive.read(archive.entries[0], 1 << 20), (e: unknown) => e instanceof EntryError && e.code === 'damaged')
+})
+
+test('a Zstandard entry with a window too large to unpack is unsupported, not damaged', () => {
+  // Frame header with a 2 GiB window, then one raw block holding "hi".
+  const frame = concat(new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0, 21 << 3, 1 | (2 << 3), 0, 0]), utf8('hi'))
+  const archive = parseZip(zip([{ name: 'big-window.bin', data: frame, method: 93, size: 2 }]), 'cp437')
+  assert.throws(
+    () => archive.read(archive.entries[0], 1024),
+    (e: unknown) => e instanceof EntryError && e.code === 'unsupported' && e.detail === 'zstd-window'
+  )
 })

@@ -14,9 +14,10 @@ function makeTable(): Uint32Array {
   return t
 }
 
-export function crc32(data: Uint8Array): number {
+/** CRC-32 of `data`; pass the CRC of the bytes before it as `previous` to continue it. */
+export function crc32(data: Uint8Array, previous = 0): number {
   const t = (table ??= makeTable())
-  let c = 0xffffffff
+  let c = (previous ^ 0xffffffff) >>> 0
   for (let i = 0; i < data.length; i++) {
     c = t[(c ^ data[i]) & 0xff] ^ (c >>> 8)
   }

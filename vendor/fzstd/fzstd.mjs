@@ -71,6 +71,26 @@ var rb = function (d, b, n) {
 };
 var b4 = function (d, b) { return (d[b] | (d[b + 1] << 8) | (d[b + 2] << 16) | (d[b + 3] << 24)) >>> 0; };
 // read Zstandard frame header
+// Archive Viewer patch: fzstd 0.1.1 moved the whole streaming window after every block, so a
+// stream of many tiny blocks cost blocks × window size. The window is now a view into a larger
+// area: it moves forward and is copied back to the start only when it reaches the end, which
+// copies each byte about three times at most.
+var wsl = function (ws) { return Math.max(ws >> 1, 131072); };
+var slw = function (st, blk) {
+    var n = blk.length, a = st.a, ws = st.w.length;
+    if (n > ws)
+        blk = blk.subarray(n - ws), n = ws;
+    if (!n)
+        return;
+    if (st.q + ws + n > a.length) {
+        cpw(a, 0, st.q + n, st.q + ws);
+        st.q = 0;
+    }
+    else
+        st.q += n;
+    a.set(blk, st.q + ws - n);
+    st.w = a.subarray(st.q, st.q + ws);
+};
 var rzfh = function (dat, w) {
     var n3 = dat[0] | (dat[1] << 8) | (dat[2] << 16);
     if (n3 == 0x2FB528 && dat[3] == 253) {
@@ -100,14 +120,18 @@ var rzfh = function (dat, w) {
         }
         if (ws > 2145386496)
             err(1);
-        var buf = new u8((w == 1 ? (fss || ws) : w ? 0 : ws) + 12);
+        // Archive Viewer patch: a streaming window (no w) gets room to slide into, see slw.
+        var wl = w == 1 ? (fss || ws) : w ? 0 : ws;
+        var buf = new u8(wl + (w ? 0 : wsl(ws)) + 12);
         buf[0] = 1, buf[4] = 4, buf[8] = 8;
         return {
             b: bt + fsb,
             y: 0,
             l: 0,
             d: di,
-            w: (w && w != 1) ? w : buf.subarray(12),
+            w: (w && w != 1) ? w : buf.subarray(12, 12 + wl),
+            a: w ? null : buf.subarray(12),
+            q: 0,
             e: ws,
             o: new i32(buf.buffer, 0, 3),
             u: fss,
@@ -734,8 +758,7 @@ var Decompress = /*#__PURE__*/ (function () {
                 }
                 else {
                     this.ondata(blk, false);
-                    cpw(this.s.w, 0, blk.length);
-                    this.s.w.set(blk, this.s.w.length - blk.length);
+                    slw(this.s, blk);
                 }
                 if (this.s.l) {
                     var rest = chunk.subarray(this.s.b);
