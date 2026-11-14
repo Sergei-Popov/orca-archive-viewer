@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "id": "archive-viewer",
+  "name": "Archive Viewer",
+  "version": "0.1.0",
+  "description": "Browse .zip, .jar, .tar.gz and other archives in Orca's editor tabs: a file tree with sizes and dates, previews of the text and images inside, and saving single files.",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "execution": "sandboxed-ui",
+  "pluginApi": 1,
+  "contributes": {
+    "customEditors": [
+      {
+        "id": "archive-viewer",
+        "title": "Archive Viewer",
+        "extensions": [
+          ".archive-viewer"
+        ],
+        "entry": "editor/main.ts",
+        "frame": "isolated"
+      }
+    ]
+  },
+  "author": {
+    "name": "Сергей Попов",
+    "url": "https://github.com/Sergei-Popov"
+  },
+  "repository": "https://github.com/Sergei-Popov/orca-archive-viewer",
+  "license": "MIT"
+}
