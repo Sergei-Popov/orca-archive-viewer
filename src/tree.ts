@@ -32,15 +32,25 @@ function folder(name: string, path: string): Node {
 export function buildTree(entries: readonly Entry[]): Node {
   const root = folder('', '')
   const folders = new Map<string, Node>([['', root]])
+  // Archives can nest folders thousands deep, so none of the walks here recurse.
   const ensure = (path: string): Node => {
-    let node = folders.get(path)
-    if (node) return node
-    const slash = path.lastIndexOf('/')
-    const parent = ensure(slash < 0 ? '' : path.slice(0, slash))
-    node = folder(path.slice(slash + 1), path)
-    parent.children.push(node)
-    folders.set(path, node)
-    return node
+    const found = folders.get(path)
+    if (found) return found
+    const missing: string[] = []
+    let at = path
+    while (!folders.has(at)) {
+      missing.push(at)
+      const slash = at.lastIndexOf('/')
+      at = slash < 0 ? '' : at.slice(0, slash)
+    }
+    let parent = folders.get(at)!
+    for (let i = missing.length - 1; i >= 0; i--) {
+      const node = folder(missing[i].slice(missing[i].lastIndexOf('/') + 1), missing[i])
+      parent.children.push(node)
+      folders.set(missing[i], node)
+      parent = node
+    }
+    return parent
   }
   const files = new Map<string, Node>()
   for (const entry of entries) {
@@ -83,36 +93,45 @@ export function buildTree(entries: readonly Entry[]): Node {
   return root
 }
 
-function total(node: Node): void {
-  if (!node.dir) return
-  node.size = 0
-  node.packed = 0
-  node.files = 0
-  node.folders = 0
-  node.hasPacked = true
-  for (const child of node.children) {
-    total(child)
-    node.size += child.size
-    node.packed += child.packed
-    node.files += child.files
-    node.folders += child.folders + (child.dir ? 1 : 0)
-    node.hasPacked &&= child.hasPacked
+/** Sums sizes and counts into every folder and sorts its children. */
+function total(root: Node): void {
+  // Folders in an order where each comes before the folders inside it; summed in reverse.
+  const order: Node[] = []
+  const stack = [root]
+  while (stack.length) {
+    const node = stack.pop()!
+    order.push(node)
+    for (const child of node.children) if (child.dir) stack.push(child)
   }
-  node.children.sort((a, b) => (a.dir === b.dir ? collator.compare(a.name, b.name) : a.dir ? -1 : 1))
+  for (let i = order.length - 1; i >= 0; i--) {
+    const node = order[i]
+    node.size = 0
+    node.packed = 0
+    node.files = 0
+    node.folders = 0
+    node.hasPacked = true
+    for (const child of node.children) {
+      node.size += child.size
+      node.packed += child.packed
+      node.files += child.files
+      node.folders += child.folders + (child.dir ? 1 : 0)
+      node.hasPacked &&= child.hasPacked
+    }
+    node.children.sort((a, b) => (a.dir === b.dir ? collator.compare(a.name, b.name) : a.dir ? -1 : 1))
+  }
 }
 
 /** Every folder path, for "expand all". */
 export function folderPaths(root: Node): string[] {
   const out: string[] = []
-  const walk = (node: Node) => {
-    for (const child of node.children) {
-      if (child.dir) {
-        out.push(child.path)
-        walk(child)
-      }
+  const stack = [root]
+  while (stack.length) {
+    const node = stack.pop()!
+    if (node !== root) out.push(node.path)
+    for (let i = node.children.length - 1; i >= 0; i--) {
+      if (node.children[i].dir) stack.push(node.children[i])
     }
   }
-  walk(root)
   return out
 }
 
@@ -124,27 +143,41 @@ export function visibleRows(root: Node, expanded: ReadonlySet<string>, filter: s
   const rows: Row[] = []
   const needle = filter.trim().toLowerCase()
   if (!needle) {
-    const walk = (node: Node, depth: number) => {
-      for (const child of node.children) {
-        rows.push({ node: child, depth })
-        if (child.dir && expanded.has(child.path)) walk(child, depth + 1)
-      }
+    const stack: Row[] = []
+    const pushChildren = (node: Node, depth: number) => {
+      for (let i = node.children.length - 1; i >= 0; i--) stack.push({ node: node.children[i], depth })
     }
-    walk(root, 0)
+    pushChildren(root, 0)
+    while (stack.length) {
+      const row = stack.pop()!
+      rows.push(row)
+      if (row.node.dir && expanded.has(row.node.path)) pushChildren(row.node, row.depth + 1)
+    }
     return rows
   }
   const matches = (node: Node): boolean => node.name.toLowerCase().includes(needle)
-  const walk = (node: Node, depth: number): Row[] => {
-    const out: Row[] = []
-    for (const child of node.children) {
-      const below = child.dir ? walk(child, depth + 1) : []
-      if (matches(child) || below.length) {
-        out.push({ node: child, depth }, ...below)
-      }
+  // Depth first with an explicit stack. A folder's row goes in when the walk enters it and is
+  // taken out again on the way back when neither it nor anything below it matched.
+  type Frame = { node: Node; depth: number; next: number; row: number; keep: boolean }
+  const stack: Frame[] = [{ node: root, depth: 0, next: 0, row: 0, keep: false }]
+  while (stack.length) {
+    const frame = stack[stack.length - 1]
+    if (frame.next < frame.node.children.length) {
+      const child = frame.node.children[frame.next++]
+      const row = rows.length
+      rows.push({ node: child, depth: frame.depth })
+      if (child.children.length) stack.push({ node: child, depth: frame.depth + 1, next: 0, row, keep: matches(child) })
+      else if (matches(child)) frame.keep = true
+      else rows.length = row
+      continue
     }
-    return out
+    stack.pop()
+    const parent = stack[stack.length - 1]
+    if (!parent) break
+    if (frame.keep) parent.keep = true
+    else rows.length = frame.row
   }
-  return walk(root, 0)
+  return rows
 }
 
 /** The node at `path`, or null. */
