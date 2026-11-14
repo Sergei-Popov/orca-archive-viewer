@@ -1,32 +1,62 @@
 {
   "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
   "manifestVersion": 2,
+  "execution": "sandboxed-ui",
   "id": "archive-viewer",
   "name": "Archive Viewer",
   "version": "0.1.0",
-  "description": "Browse .zip, .jar, .tar.gz and other archives in Orca's editor tabs: a file tree with sizes and dates, previews of the text and images inside, and saving single files.",
+  "description": "Browse archives in Orca's editor tabs: .zip, .jar, .apk, .whl, .epub and other ZIP files, .tar, and .gz, .bz2, .xz or .zst (also .tar.gz and friends). A fast file tree with sizes and dates, a filter, previews of the text, images and hex inside, nested archives, legacy code page names and saving single files. Read-only, offline.",
+  "author": {
+    "name": "Sergei Popov",
+    "url": "https://github.com/Sergei-Popov"
+  },
+  "repository": "https://github.com/Sergei-Popov/orca-archive-viewer",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "cover": {
+    "path": "images/cover.png",
+    "alt": "A ZIP in Archive Viewer: the file tree with sizes and dates on the left, its README with line numbers and details on the right."
+  },
   "engines": {
     "orca": ">=1.4.248"
   },
-  "execution": "sandboxed-ui",
   "pluginApi": 1,
   "contributes": {
     "customEditors": [
       {
-        "id": "archive-viewer",
+        "id": "archive",
         "title": "Archive Viewer",
+        "icon": "icons/archive.png",
         "extensions": [
-          ".archive-viewer"
+          ".zip",
+          ".jar",
+          ".war",
+          ".ear",
+          ".aar",
+          ".apk",
+          ".whl",
+          ".nupkg",
+          ".vsix",
+          ".xpi",
+          ".ipa",
+          ".epub",
+          ".tar",
+          ".gz",
+          ".tgz",
+          ".bz2",
+          ".tbz2",
+          ".tbz",
+          ".xz",
+          ".txz",
+          ".zst",
+          ".tzst"
         ],
-        "entry": "editor/main.ts",
+        "entry": "src/editor.ts",
+        "priority": "default",
+        "contentKind": "bytes",
         "frame": "isolated"
       }
     ]
   },
-  "author": {
-    "name": "Сергей Попов",
-    "url": "https://github.com/Sergei-Popov"
-  },
-  "repository": "https://github.com/Sergei-Popov/orca-archive-viewer",
-  "license": "MIT"
+  "capabilities": []
 }
