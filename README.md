@@ -22,7 +22,7 @@ Archive Viewer has:
   images (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG), and a hex dump of the first 64 KB for
   anything else; details: size, packed size, method, date, permissions, CRC-32, link target;
 - **archives inside archives**: a `.jar` in a `.zip` or a `.tar.gz` in a `.tar` opens in place,
-  and a trail at the top leads back; a `.zip.gz` opens straight into the zip;
+  and a trail at the top leads back; a `.zip.gz` opened from Orca goes straight into the zip;
 - **Save…** a single file through Orca's save dialog (up to 64 MB) and **Copy path**;
 - **old code pages** for names that the archive stores without UTF-8 (zips made on Windows):
   CP437, CP866 or Windows-1251, picked by Orca's language and switchable in the toolbar;
@@ -33,8 +33,21 @@ It is read-only and offline: no capabilities, no network, the file is never modi
 
 **Not supported.** 7-Zip, RAR, lzip, `.Z` and `.cab` archives show a message saying so.
 Encrypted ZIP entries and other ZIP methods (LZMA, PPMd, Deflate64…) are listed but not
-unpacked. Orca sends at most 64 MB to a plugin editor and shows its own notice for larger
-files; an archive may unpack to at most 512 MB.
+unpacked.
+
+**Limits.** Each of these shows a message instead of the archive or the file:
+
+- Orca sends at most 64 MB to a plugin editor and shows its own notice for larger files.
+- A compressed stream or an inner archive may unpack to at most 512 MB, and all open levels
+  of archives inside archives to 1 GB together, at most 8 levels deep.
+- Zstandard: windows up to 128 MB (`zstd --ultra -22` and `--long=27` fit; `--long=28` and
+  up do not).
+- XZ: dictionaries up to 64 MB (`xz -9` fits), CRC-32, CRC-64 or no check, and the LZMA2
+  filter only: no SHA-256 check, no BCJ (`--x86`, `--arm64`…) or delta filters.
+
+A damaged or cut-off archive shows what could be read with a notice: the entries before the
+damage, or for a `.gz` of one file, the part of it before the damage (GZIP CRC-32 and size
+are checked). A ZIP entry that unpacks to more than the size its archive records is damaged.
 
 ## Keyboard
 
@@ -77,11 +90,18 @@ orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the e
 - `src/archive/` — format detection and readers: `zip.ts`, `tar.ts`, `open.ts` (compressed
   streams), `names.ts` (code pages), `model.ts`.
 - `src/codecs/` — Deflate and GZIP (fflate), Zstandard (fzstd), XZ (WebAssembly), and bzip2
-  written here; `sink.ts` caps the output so a zip bomb stops at the limit.
+  written here. `sink.ts` collects the output and refuses or cuts it at the limit. Decoders
+  work in steps (64 KB of DEFLATE input, one bzip2 block, one XZ output buffer, one Zstandard
+  frame or 64 KB of its input) and stop at the first step past the limit, so a zip bomb
+  costs about one step more than the limit. Zstandard windows and content sizes are checked
+  in the frame headers before fzstd allocates anything.
+- `src/nesting.ts` — depth and memory limits for archives inside archives.
 - `src/tree.ts`, `src/content.ts`, `src/display.ts` — the tree model, content sniffing and
   formatting, all DOM-free and tested; `src/fixtures/` builds test archives.
 - `vendor/fflate/` — [fflate](https://github.com/101arrowz/fflate) 0.8.3 (MIT).
-- `vendor/fzstd/` — [fzstd](https://github.com/101arrowz/fzstd) 0.1.1 (MIT).
+- `vendor/fzstd/` — [fzstd](https://github.com/101arrowz/fzstd) 0.1.1 (MIT), patched (marked
+  "Archive Viewer patch") so a streaming window slides without moving all of it after every
+  block.
 - `vendor/xz/` — the WebAssembly build of [XZ Embedded](https://tukaani.org/xz/embedded.html)
   (public domain) from [xz-decompress](https://github.com/httptoolkit/xz-decompress) 0.2.3
   (MIT), base64-encoded so the tab loads it without a request.
