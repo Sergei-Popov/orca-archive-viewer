@@ -17,6 +17,32 @@
     "path": "images/cover.png",
     "alt": "A ZIP in Archive Viewer: the file tree with sizes and dates on the left, its README with line numbers and details on the right."
   },
+  "screenshots": [
+    {
+      "path": "images/code-light.png",
+      "alt": "src/index.ts from a ZIP with Orca's light theme: the src folder open in the tree, the file with line numbers, compression method, CRC-32 and encoding.",
+      "caption": "Read text and code inside an archive without unpacking it.",
+      "theme": "light"
+    },
+    {
+      "path": "images/image-dark.png",
+      "alt": "public/hero.png selected in the archive tree with Orca's dark theme, previewed on a checkerboard with its dimensions, 480 × 300.",
+      "caption": "Images inside the archive preview in place.",
+      "theme": "dark"
+    },
+    {
+      "path": "images/nested-dark.png",
+      "alt": "charts-1.8.2.jar opened from inside the ZIP, with the breadcrumb Archive › charts-1.8.2.jar; BarChart.class shows as hex starting with ca fe ba be.",
+      "caption": "Open an archive inside an archive; binary files show as hex.",
+      "theme": "dark"
+    },
+    {
+      "path": "images/filter-light.png",
+      "alt": "A .tar.gz filtered by \".ts\" with Orca's light theme: the matching files highlighted in their folders, forecast.ts previewed on the right.",
+      "caption": "Filter by name in .tar.gz, .tar.xz, .zst and the other formats too.",
+      "theme": "light"
+    }
+  ],
   "engines": {
     "orca": ">=1.4.248"
   },
