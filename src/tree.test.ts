@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
 import type { Entry } from './archive/model'
-import { ancestors, buildTree, findNode, folderPaths, visibleRows } from './tree'
+import { ancestors, buildTree, findNode, folderPaths, renamedPaths, visibleRows } from './tree'
 
 const file = (index: number, path: string, size: number, packed?: number): Entry => ({ index, path, dir: false, size, packed })
 
@@ -57,4 +57,14 @@ test('a repeated path keeps the last entry', () => {
 test('ancestors lists the folders above a path', () => {
   assert.deepEqual(ancestors('a/b/c.txt'), ['a', 'a/b'])
   assert.deepEqual(ancestors('top.txt'), [])
+})
+
+test('renamedPaths maps files and folders to their names in another code page', () => {
+  const before: Entry[] = [file(0, 'ЎаЇЄ /д ©«.txt', 1), file(1, 'same.txt', 1)]
+  const after: Entry[] = [file(0, 'папка/файл.txt', 1), file(1, 'same.txt', 1)]
+  const map = renamedPaths(before, after)
+  assert.equal(map.get('ЎаЇЄ '), 'папка')
+  assert.equal(map.get('ЎаЇЄ /д ©«.txt'), 'папка/файл.txt')
+  assert.equal(map.size, 2)
+  assert.equal(map.has('same.txt'), false)
 })

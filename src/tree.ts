@@ -165,3 +165,25 @@ export function ancestors(path: string): string[] {
   for (let i = 1; i < parts.length; i++) out.push(parts.slice(0, i).join('/'))
   return out
 }
+
+/**
+ * Old path → new path for every file and folder, after the same archive's names were decoded
+ * with another code page. Entries keep their `index`, and `/` is ASCII in every code page, so a
+ * path keeps its depth.
+ */
+export function renamedPaths(before: readonly Entry[], after: readonly Entry[]): Map<string, string> {
+  const next = new Map<number, string>()
+  for (const entry of after) next.set(entry.index, entry.path)
+  const out = new Map<string, string>()
+  for (const entry of before) {
+    const renamed = next.get(entry.index)
+    if (renamed === undefined || renamed === entry.path) continue
+    const from = entry.path.split('/')
+    const to = renamed.split('/')
+    if (from.length !== to.length) continue
+    for (let depth = 1; depth <= from.length; depth++) {
+      out.set(from.slice(0, depth).join('/'), to.slice(0, depth).join('/'))
+    }
+  }
+  return out
+}

@@ -14,6 +14,31 @@ export const IMAGE_TYPES: Record<string, string> = {
   svg: 'image/svg+xml'
 }
 
+const ARCHIVE_EXTENSIONS = new Set(
+  'zip jar war ear aar apk whl nupkg vsix xpi ipa epub tar gz tgz bz2 tbz2 tbz xz txz zst tzst 7z rar cab lz z'.split(' ')
+)
+
+const TEXT_EXTENSIONS = new Set(
+  (
+    'txt text md markdown rst adoc json jsonc json5 yaml yml toml ini cfg conf properties env xml xsd xsl plist ' +
+    'html htm xhtml css scss sass less js mjs cjs jsx ts mts cts tsx vue svelte py pyi rb php pl lua go rs java kt kts ' +
+    'scala groovy gradle swift m mm c h cc cpp cxx hpp hh cs fs vb dart r jl ex exs erl hs clj sql graphql proto ' +
+    'sh bash zsh fish ps1 bat cmd makefile mk cmake dockerfile tf hcl nix csv tsv log lock diff patch srt vtt mf sf ' +
+    'gitignore gitattributes editorconfig npmrc license readme changelog'
+  ).split(' ')
+)
+
+export type NameKind = 'archive' | 'image' | 'text' | 'file'
+
+/** What a file name suggests, for the tree's icons; the preview sniffs the bytes instead. */
+export function nameKind(name: string): NameKind {
+  const ext = extension(name) || name.replace(/^\./, '').toLowerCase()
+  if (ARCHIVE_EXTENSIONS.has(ext)) return 'archive'
+  if (ext in IMAGE_TYPES) return 'image'
+  if (TEXT_EXTENSIONS.has(ext)) return 'text'
+  return 'file'
+}
+
 export function extension(name: string): string {
   const dot = name.lastIndexOf('.')
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''

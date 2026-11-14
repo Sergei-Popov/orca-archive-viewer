@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
 import { zip } from './fixtures/build'
-import { classify, decodeText, hexDump, imageType } from './content'
+import { classify, decodeText, hexDump, imageType, nameKind } from './content'
 
 const bytes = (...values: number[]) => new Uint8Array(values)
 
@@ -40,4 +40,14 @@ test('hexDump writes offset, hex and ASCII columns', () => {
     '00000000  48 65 6c 6c 6f 2c 20 61  72 63 68 69 76 65 21 21  Hello, archive!!'
   )
   assert.equal(dump.split('\n')[1], '00000010  0a                                                .')
+})
+
+test('nameKind picks the tree icon from the name', () => {
+  assert.equal(nameKind('lib.JAR'), 'archive')
+  assert.equal(nameKind('backup.tar.zst'), 'archive')
+  assert.equal(nameKind('logo.svg'), 'image')
+  assert.equal(nameKind('README'), 'text')
+  assert.equal(nameKind('.gitignore'), 'text')
+  assert.equal(nameKind('MANIFEST.MF'), 'text')
+  assert.equal(nameKind('app.exe'), 'file')
 })

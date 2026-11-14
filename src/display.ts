@@ -35,6 +35,12 @@ export function formatDate(ms: number | undefined, locale: string): string {
   })
 }
 
+/** Compact date and time for the tree's column: "11/14/26, 3:31 PM", "14.11.2026, 15:31". */
+export function formatShortDate(ms: number | undefined, locale: string): string {
+  if (ms === undefined || !Number.isFinite(ms)) return ''
+  return new Date(ms).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' })
+}
+
 /** Packed size as a share of the unpacked size: "35 %". */
 export function formatRatio(packed: number, size: number, locale: string): string {
   if (size <= 0) return ''
