@@ -123,6 +123,9 @@ export function bunzip2(
   const sink = new Sink(limit, truncate)
   try {
     const r = new BitReader(data)
+    // The block buffer (3.6 MB at level 9) is made on the first block and shared by every
+    // stream, so many empty streams cost nothing.
+    const scratch: Scratch = { tt: null }
     let streams = 0
     while (!sink.full) {
       if (streams > 0) {
@@ -139,7 +142,7 @@ export function bunzip2(
       if (level < 1 || level > 9) {
         throw new DamagedError('bad bzip2 block size')
       }
-      decodeStream(r, level * 100000, sink)
+      decodeStream(r, level * 100000, sink, scratch)
       streams++
     }
   } catch (error) {
@@ -148,14 +151,16 @@ export function bunzip2(
   return { bytes: sink.result(), truncated: sink.full }
 }
 
-function decodeStream(r: BitReader, blockMax: number, sink: Sink): void {
-  const tt = new Uint32Array(blockMax)
+type Scratch = { tt: Uint32Array | null }
+
+function decodeStream(r: BitReader, blockMax: number, sink: Sink, scratch: Scratch): void {
   for (;;) {
     const hi = r.bits(24)
     const lo = r.bits(24)
     const crc = ((r.bits(16) << 16) | r.bits(16)) >>> 0
     if (hi === 0x314159 && lo === 0x265359) {
-      decodeBlock(r, tt, blockMax, sink, crc)
+      if (!scratch.tt || scratch.tt.length < blockMax) scratch.tt = new Uint32Array(blockMax)
+      decodeBlock(r, scratch.tt, blockMax, sink, crc)
       if (sink.full) return
     } else if (hi === 0x177245 && lo === 0x385090) {
       return

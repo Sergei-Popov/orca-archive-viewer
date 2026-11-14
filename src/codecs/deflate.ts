@@ -1,30 +1,42 @@
-// DEFLATE and GZIP through fflate, stopping at a size limit.
+// DEFLATE and GZIP through fflate's streaming inflater, fed in small slices so a size cap stops it
+// early: one slice of DEFLATE expands to at most about 1000 times its size.
 
-import { Gunzip, Inflate, inflateSync } from '../../vendor/fflate/fflate.mjs'
+import { Inflate } from '../../vendor/fflate/fflate.mjs'
+import { crc32 } from './crc32'
 import { DamagedError, Sink, TooLargeError, asDecodeError, feed } from './sink'
 
+const SLICE = 1 << 16
+
 /**
- * Raw DEFLATE (ZIP method 8). `expected` is the size the archive declares: when it fits the limit
- * the data inflates in one call into a buffer of that size; otherwise it streams and stops at
- * `limit`, returning what it has with `truncated` set.
+ * Raw DEFLATE (ZIP method 8). `expected` is the size the archive declares. Up to `limit` bytes
+ * come back, with `truncated` set when the entry is longer. Data that unpacks to more than the
+ * declared size is damaged: it stops one byte past the declared size instead of running on.
  */
 export function inflate(
   data: Uint8Array,
   expected: number,
-  limit: number
+  limit: number,
+  slice = SLICE
 ): { bytes: Uint8Array; truncated: boolean } {
+  const cap = Math.min(limit, expected) + 1
+  // DEFLATE expands at most 1032 times, so a lying size cannot make the sink allocate much, and
+  // slices of about cap / 1032 bytes keep the work past the cap to about the cap itself.
+  const sink = new Sink(cap, true, Math.min(cap, data.length * 1032 + 64))
+  const step = Math.min(slice, Math.max(1024, Math.ceil(cap / 1032)))
   try {
-    if (expected <= limit && expected > 0) {
-      const out = inflateSync(data, { out: new Uint8Array(expected) })
-      return { bytes: out, truncated: false }
-    }
-    const sink = new Sink(limit, true)
     const stream = new Inflate((chunk) => sink.push(chunk))
-    feed(data, (chunk, final) => stream.push(chunk, final), sink)
-    return { bytes: sink.result(), truncated: sink.full }
+    feed(data, (chunk, final) => stream.push(chunk, final && !sink.full), sink, step)
   } catch (error) {
-    throw asDecodeError(error, 'deflate')
+    if (!sink.full) throw asDecodeError(error, 'deflate')
   }
+  const bytes = sink.result()
+  if (bytes.length > expected) {
+    throw new DamagedError('deflate data is longer than the size the archive declares')
+  }
+  if (bytes.length > limit) {
+    return { bytes: bytes.subarray(0, limit), truncated: true }
+  }
+  return { bytes, truncated: false }
 }
 
 export type GzipHeader = {
@@ -54,23 +66,108 @@ export function gzipHeader(data: Uint8Array): GzipHeader {
   return { name, mtime: seconds ? seconds * 1000 : null }
 }
 
-/** Every member of a GZIP file, joined. Throws `TooLargeError` past `limit`. */
-export function gunzip(data: Uint8Array, limit: number): Uint8Array {
-  const sink = new Sink(limit)
-  try {
-    const stream = new Gunzip((chunk) => sink.push(chunk))
-    feed(data, (chunk, final) => stream.push(chunk, final), sink, 1 << 20)
-  } catch (error) {
-    // Tar writers pad .tar.gz files with zeros after the last member; fflate reads those as a
-    // broken member. Keep what was unpacked when it ends on padding.
-    if (!(error instanceof TooLargeError) && sink.total > 0 && endsWithZeros(data)) {
-      return sink.result()
-    }
-    throw asDecodeError(error, 'gzip')
+/** Length of the member header at `at`; throws when there is no valid one. */
+function memberHeader(data: Uint8Array, at: number): number {
+  if (at + 10 > data.length || data[at] !== 0x1f || data[at + 1] !== 0x8b || data[at + 2] !== 8) {
+    throw new DamagedError('not a gzip member')
   }
-  return sink.result()
+  const flags = data[at + 3]
+  if (flags & 0xe0) throw new DamagedError('reserved gzip flags')
+  let p = at + 10
+  if (flags & 4) p += 2 + (data[p] | (data[p + 1] << 8))
+  for (const bit of [8, 16]) {
+    if (flags & bit) {
+      while (p < data.length && data[p] !== 0) p++
+      p++
+    }
+  }
+  if (flags & 2) p += 2
+  if (p > data.length) throw new DamagedError('gzip header ends early')
+  return p - at
 }
 
-function endsWithZeros(data: Uint8Array): boolean {
-  return data.length > 0 && data[data.length - 1] === 0
+const u32 = (b: Uint8Array, at: number) =>
+  (b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24)) >>> 0
+
+function allZero(data: Uint8Array, from: number): boolean {
+  for (let i = from; i < data.length; i++) if (data[i] !== 0) return false
+  return true
+}
+
+/** fflate's Inflate state: `s.f` the last block began, `s.l` a block is in progress, `s.p` the
+ *  bit position in `p`, the input not consumed yet. Gunzip in fflate 0.8.3 reads the same. */
+type InflateInternals = { s: { f?: number; l?: unknown; p?: number }; p: Uint8Array }
+
+export type GunzipResult = {
+  bytes: Uint8Array
+  /** A member failed its CRC-32 or size check, the data ends early, or junk follows it. */
+  damaged: boolean
+}
+
+/**
+ * Every member of a GZIP file, joined, each checked against its CRC-32 and ISIZE. Zero bytes
+ * after a complete member are padding (tar writers add them). Damaged data returns what came
+ * before the damage with `damaged` set; data with nothing readable throws `DamagedError`.
+ * Throws `TooLargeError` past `limit`.
+ */
+export function gunzip(data: Uint8Array, limit: number, slice = SLICE): GunzipResult {
+  // ISIZE of the last member: the whole size for the usual single-member file.
+  const hint = data.length >= 18 ? Math.min(u32(data, data.length - 4), data.length * 1032) : 0
+  const sink = new Sink(limit, false, hint)
+  let damaged = false
+  let members = 0
+  let at = 0
+  try {
+    while (at < data.length) {
+      if (members > 0 && allZero(data, at)) break
+      let pos: number
+      try {
+        pos = at + memberHeader(data, at)
+      } catch (error) {
+        if (members === 0) throw error
+        damaged = true // something that is not gzip after the last member
+        break
+      }
+      let crc = 0
+      let size = 0
+      const stream = new Inflate((chunk) => {
+        crc = crc32(chunk, crc)
+        size += chunk.length
+        sink.push(chunk)
+      })
+      const state = stream as unknown as InflateInternals
+      let rest: Uint8Array | null = null
+      while (pos < data.length) {
+        const end = Math.min(pos + slice, data.length)
+        stream.push(data.subarray(pos, end), false)
+        pos = end
+        if (state.s.f && !state.s.l) {
+          rest = state.p.subarray(((state.s.p ?? 0) + 7) >> 3)
+          break
+        }
+      }
+      if (!rest) {
+        damaged = true // the data ends inside the member
+        break
+      }
+      const trailer = pos - rest.length
+      if (trailer + 8 > data.length) {
+        damaged = true
+        break
+      }
+      if (u32(data, trailer) !== crc >>> 0 || u32(data, trailer + 4) !== size >>> 0) {
+        damaged = true
+      }
+      members++
+      at = trailer + 8
+    }
+  } catch (error) {
+    if (error instanceof TooLargeError) throw error
+    if (sink.total === 0) throw asDecodeError(error, 'gzip')
+    damaged = true
+  }
+  if (members === 0 && sink.total === 0) {
+    throw new DamagedError('gzip data ends early')
+  }
+  return { bytes: sink.result(), damaged }
 }

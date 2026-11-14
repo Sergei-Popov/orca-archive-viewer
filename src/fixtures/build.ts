@@ -47,7 +47,7 @@ class Writer {
 export type ZipItem = {
   name: string | Uint8Array
   data?: Uint8Array
-  method?: 0 | 8 | 99 | 14
+  method?: 0 | 8 | 12 | 14 | 93 | 99
   flags?: number
   /** High byte of "version made by": 0 DOS, 3 Unix. */
   host?: number
@@ -59,6 +59,8 @@ export type ZipItem = {
   time?: number
   /** Store this CRC instead of the real one. */
   crc?: number
+  /** Store this uncompressed size instead of the real one. */
+  size?: number
 }
 
 export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: string; zip64End?: boolean } = {}): Uint8Array {
@@ -70,8 +72,10 @@ export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: 
     const name = typeof item.name === 'string' ? utf8(item.name) : item.name
     const data = item.data ?? new Uint8Array(0)
     const method = item.method ?? 0
+    // Only Deflate is compressed here; other methods store `data` as already packed bytes.
     const packed = method === 8 ? deflateSync(data) : data
     const crc = item.crc ?? crc32(data)
+    const size = item.size ?? data.length
     const offset = w.length - base
     const extra = item.extra ?? new Uint8Array(0)
     w.u32(0x04034b50)
@@ -82,7 +86,7 @@ export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: 
     w.u16(item.date ?? 0x5b21)
     w.u32(crc)
     w.u32(packed.length)
-    w.u32(data.length)
+    w.u32(size)
     w.u16(name.length)
     w.u16(0)
     w.raw(name)
@@ -94,7 +98,7 @@ export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: 
       const x = new Writer()
       x.u16(1)
       x.u16(24)
-      x.u64(data.length)
+      x.u64(size)
       x.u64(packed.length)
       x.u64(offset)
       zip64Extra = x.done()
@@ -108,7 +112,7 @@ export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: 
     c.u16(item.date ?? 0x5b21)
     c.u32(crc)
     c.u32(item.zip64 ? 0xffffffff : packed.length)
-    c.u32(item.zip64 ? 0xffffffff : data.length)
+    c.u32(item.zip64 ? 0xffffffff : size)
     c.u16(name.length)
     c.u16(zip64Extra.length + extra.length)
     c.u16(0)

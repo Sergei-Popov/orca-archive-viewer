@@ -77,15 +77,17 @@ export async function openArchive(bytes: Uint8Array, options: OpenOptions): Prom
   }
 
   let inner: Uint8Array
-  if (magic === 'gzip') inner = gunzip(bytes, limit)
+  // GZIP keeps what it unpacked before damage (a cut download) and says so.
+  let damaged = false
+  if (magic === 'gzip') ({ bytes: inner, damaged } = gunzip(bytes, limit))
   else if (magic === 'bzip2') inner = bunzip2(bytes, limit).bytes
   else if (magic === 'xz') inner = (await unxz(bytes, limit)).bytes
   else inner = unzstd(bytes, limit).bytes
 
   if (isTar(inner)) {
-    return parseTar(inner, options.encoding, `TAR + ${label}`, bytes.length)
+    return parseTar(inner, options.encoding, `TAR + ${label}`, bytes.length, damaged)
   }
-  return single(bytes, inner, magic, label, options)
+  return single(bytes, inner, magic, label, options, damaged)
 }
 
 const SUFFIXES: Record<string, string[]> = {
@@ -113,7 +115,8 @@ function single(
   inner: Uint8Array,
   magic: Magic,
   label: string,
-  options: OpenOptions
+  options: OpenOptions,
+  damaged: boolean
 ): Archive {
   let name: string | undefined
   let mtime: number | undefined
@@ -131,6 +134,7 @@ function single(
     archiveSize: bytes.length,
     legacyNames: false,
     encoding: options.encoding,
+    damaged,
     read(target, limit) {
       if (target.index !== 0) throw new EntryError('missing')
       return { bytes: inner.subarray(0, Math.min(limit, inner.length)), truncated: inner.length > limit }

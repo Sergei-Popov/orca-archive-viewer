@@ -6,7 +6,7 @@
 import { bunzip2 } from '../codecs/bzip2'
 import { crc32 } from '../codecs/crc32'
 import { inflate } from '../codecs/deflate'
-import { DamagedError, TooLargeError } from '../codecs/sink'
+import { DamagedError, TooLargeError, UnsupportedDataError } from '../codecs/sink'
 import { unzstd } from '../codecs/zstd'
 import { findEndOfCentralDirectory } from './detect'
 import { type Archive, type Entry, EntryError, type ReadResult } from './model'
@@ -266,6 +266,7 @@ function readRaw(bytes: Uint8Array, raw: Raw, shift: number, limit: number): Rea
     }
   } catch (error) {
     if (error instanceof EntryError) throw error
+    if (error instanceof UnsupportedDataError) throw new EntryError('unsupported', error.feature)
     if (error instanceof DamagedError || error instanceof TooLargeError) {
       throw new EntryError('damaged', error.message)
     }

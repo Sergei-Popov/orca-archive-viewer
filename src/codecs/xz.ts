@@ -3,7 +3,7 @@
 // The context protocol follows xz-decompress's XzContext (MIT, Tim Perry, Steve Sanderson).
 
 import wasmBase64 from '../../vendor/xz/xz-embedded.mjs'
-import { DamagedError, Sink, asDecodeError } from './sink'
+import { DamagedError, Sink, UnsupportedDataError, asDecodeError } from './sink'
 
 type XzExports = {
   memory: WebAssembly.Memory
@@ -13,8 +13,22 @@ type XzExports = {
   get_next_output(ptr: number): number
 }
 
+// enum xz_ret in xz-embedded's xz.h.
 const XZ_OK = 0
 const XZ_STREAM_END = 1
+const XZ_UNSUPPORTED_CHECK = 2
+const XZ_MEM_ERROR = 3
+const XZ_MEMLIMIT_ERROR = 4
+const XZ_OPTIONS_ERROR = 6
+
+/** What a status other than OK and STREAM_END means for the person looking at the file. */
+function statusError(status: number): Error {
+  // The build caps the dictionary at 64 MiB (xz -9 uses 64 MiB; --lzma2=dict=… can ask for more).
+  if (status === XZ_MEMLIMIT_ERROR || status === XZ_MEM_ERROR) return new UnsupportedDataError('xz-dictionary')
+  // The build has CRC32 and CRC64 checks and the LZMA2 filter only: no SHA-256, BCJ or delta.
+  if (status === XZ_OPTIONS_ERROR || status === XZ_UNSUPPORTED_CHECK) return new UnsupportedDataError('xz-options')
+  return new DamagedError(`xz error ${status}`)
+}
 
 let instance: Promise<XzExports> | null = null
 
@@ -62,7 +76,7 @@ export async function unxz(
       const status = xz.get_next_output(ptr)
       ;({ mem8, mem32: m32 } = view())
       if (status !== XZ_OK && status !== XZ_STREAM_END) {
-        throw new DamagedError(`xz error ${status}`)
+        throw statusError(status)
       }
       const produced = m32[5]
       sink.push(mem8.subarray(outStart, outStart + produced))
