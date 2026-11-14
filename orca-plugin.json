@@ -1,32 +1,88 @@
 {
   "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
   "manifestVersion": 2,
+  "execution": "sandboxed-ui",
   "id": "archive-viewer",
   "name": "Archive Viewer",
   "version": "0.1.0",
-  "description": "Browse .zip, .jar, .tar.gz and other archives in Orca's editor tabs: a file tree with sizes and dates, previews of the text and images inside, and saving single files.",
+  "description": "Browse archives in Orca's editor tabs: .zip, .jar, .apk, .whl, .epub and other ZIP files, .tar, and .gz, .bz2, .xz or .zst (also .tar.gz and friends). A fast file tree with sizes and dates, a filter, previews of the text, images and hex inside, nested archives, legacy code page names and saving single files. Read-only, offline.",
+  "author": {
+    "name": "Sergei Popov",
+    "url": "https://github.com/Sergei-Popov"
+  },
+  "repository": "https://github.com/Sergei-Popov/orca-archive-viewer",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "cover": {
+    "path": "images/cover.png",
+    "alt": "A ZIP in Archive Viewer: the file tree with sizes and dates on the left, its README with line numbers and details on the right."
+  },
+  "screenshots": [
+    {
+      "path": "images/code-light.png",
+      "alt": "src/index.ts from a ZIP with Orca's light theme: the src folder open in the tree, the file with line numbers, compression method, CRC-32 and encoding.",
+      "caption": "Read text and code inside an archive without unpacking it.",
+      "theme": "light"
+    },
+    {
+      "path": "images/image-dark.png",
+      "alt": "public/hero.png selected in the archive tree with Orca's dark theme, previewed on a checkerboard with its dimensions, 480 × 300.",
+      "caption": "Images inside the archive preview in place.",
+      "theme": "dark"
+    },
+    {
+      "path": "images/nested-dark.png",
+      "alt": "charts-1.8.2.jar opened from inside the ZIP, with the breadcrumb Archive › charts-1.8.2.jar; BarChart.class shows as hex starting with ca fe ba be.",
+      "caption": "Open an archive inside an archive; binary files show as hex.",
+      "theme": "dark"
+    },
+    {
+      "path": "images/filter-light.png",
+      "alt": "A .tar.gz filtered by \".ts\" with Orca's light theme: the matching files highlighted in their folders, forecast.ts previewed on the right.",
+      "caption": "Filter by name in .tar.gz, .tar.xz, .zst and the other formats too.",
+      "theme": "light"
+    }
+  ],
   "engines": {
     "orca": ">=1.4.248"
   },
-  "execution": "sandboxed-ui",
   "pluginApi": 1,
   "contributes": {
     "customEditors": [
       {
-        "id": "archive-viewer",
+        "id": "archive",
         "title": "Archive Viewer",
+        "icon": "icons/archive.png",
         "extensions": [
-          ".archive-viewer"
+          ".zip",
+          ".jar",
+          ".war",
+          ".ear",
+          ".aar",
+          ".apk",
+          ".whl",
+          ".nupkg",
+          ".vsix",
+          ".xpi",
+          ".ipa",
+          ".epub",
+          ".tar",
+          ".gz",
+          ".tgz",
+          ".bz2",
+          ".tbz2",
+          ".tbz",
+          ".xz",
+          ".txz",
+          ".zst",
+          ".tzst"
         ],
-        "entry": "editor/main.ts",
+        "entry": "src/editor.ts",
+        "priority": "default",
+        "contentKind": "bytes",
         "frame": "isolated"
       }
     ]
   },
-  "author": {
-    "name": "Сергей Попов",
-    "url": "https://github.com/Sergei-Popov"
-  },
-  "repository": "https://github.com/Sergei-Popov/orca-archive-viewer",
-  "license": "MIT"
+  "capabilities": []
 }
