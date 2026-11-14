@@ -54,19 +54,17 @@ export function decodeLegacy(bytes: Uint8Array, encoding: LegacyEncoding): strin
 export type DecodedName = { name: string; legacy: boolean }
 
 /**
- * A name: UTF-8 when `utf8Flag` is set or the bytes are valid UTF-8, otherwise `legacy`
- * (and marked so the toolbar offers the code page picker).
+ * A name: UTF-8 when the bytes are valid UTF-8, otherwise `legacy` (and marked so the toolbar
+ * offers the code page picker). Some tools set the UTF-8 flag on names in the system code page,
+ * so the flag does not win over bytes that are not UTF-8.
  */
-export function decodeName(bytes: Uint8Array, utf8Flag: boolean, legacy: LegacyEncoding): DecodedName {
+export function decodeName(bytes: Uint8Array, _utf8Flag: boolean, legacy: LegacyEncoding): DecodedName {
   if (isAscii(bytes)) {
     return { name: latin(bytes), legacy: false }
   }
   const text = tryUtf8(bytes)
   if (text !== null) {
     return { name: text, legacy: false }
-  }
-  if (utf8Flag) {
-    return { name: decoder('utf-8').decode(bytes), legacy: false }
   }
   return { name: decodeLegacy(bytes, legacy), legacy: true }
 }

@@ -83,7 +83,7 @@ export async function openArchive(bytes: Uint8Array, options: OpenOptions): Prom
   else inner = unzstd(bytes, limit).bytes
 
   if (isTar(inner)) {
-    return parseTar(inner, options.encoding, `TAR + ${label}`)
+    return parseTar(inner, options.encoding, `TAR + ${label}`, bytes.length)
   }
   return single(bytes, inner, magic, label, options)
 }

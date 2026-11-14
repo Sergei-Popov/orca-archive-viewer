@@ -59,7 +59,13 @@ export function parsePax(data: Uint8Array): Record<string, string> {
   return out
 }
 
-export function parseTar(bytes: Uint8Array, encoding: LegacyEncoding, format = 'TAR'): Archive {
+/** `archiveSize`: the file's own size when the tar came out of a compressed stream. */
+export function parseTar(
+  bytes: Uint8Array,
+  encoding: LegacyEncoding,
+  format = 'TAR',
+  archiveSize = bytes.length
+): Archive {
   const raws: Raw[] = []
   let globalPax: Record<string, string> = {}
   let pax: Record<string, string> = {}
@@ -123,7 +129,7 @@ export function parseTar(bytes: Uint8Array, encoding: LegacyEncoding, format = '
     if (damaged) break
     at = next
   }
-  return build(bytes, raws, encoding, format, damaged)
+  return build(bytes, raws, encoding, format, damaged, archiveSize)
 }
 
 const TYPE_BITS: Record<string, number> = {
@@ -138,7 +144,14 @@ const TYPE_BITS: Record<string, number> = {
   D: 0o040000
 }
 
-function build(bytes: Uint8Array, raws: Raw[], encoding: LegacyEncoding, format: string, damaged: boolean): Archive {
+function build(
+  bytes: Uint8Array,
+  raws: Raw[],
+  encoding: LegacyEncoding,
+  format: string,
+  damaged: boolean,
+  archiveSize: number
+): Archive {
   let legacyNames = false
   const decode = (b: Uint8Array) => {
     const name = decodeName(b, false, encoding)
@@ -170,7 +183,7 @@ function build(bytes: Uint8Array, raws: Raw[], encoding: LegacyEncoding, format:
     kind: 'tar',
     format,
     entries,
-    archiveSize: bytes.length,
+    archiveSize,
     legacyNames,
     encoding,
     damaged,
@@ -194,7 +207,7 @@ function build(bytes: Uint8Array, raws: Raw[], encoding: LegacyEncoding, format:
       return { bytes: bytes.subarray(raw.dataStart, raw.dataStart + length), truncated: raw.size > limit }
     },
     withEncoding(next) {
-      return build(bytes, raws, next, format, damaged)
+      return build(bytes, raws, next, format, damaged, archiveSize)
     }
   }
 }

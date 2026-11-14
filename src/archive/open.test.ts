@@ -19,9 +19,12 @@ test('detect recognises formats by their first bytes', () => {
 })
 
 test('a .tar.gz opens as its tar', async () => {
-  const archive = await openArchive(gzipSync(tar([{ name: 'x/y.txt', data: utf8('in tgz') }])), { encoding: 'cp437' })
+  const packed = gzipSync(tar([{ name: 'x/y.txt', data: utf8('in tgz') }]))
+  const archive = await openArchive(packed, { encoding: 'cp437' })
   assert.equal(archive.format, 'TAR + GZIP')
   assert.equal(archive.kind, 'tar')
+  assert.equal(archive.archiveSize, packed.length)
+  assert.equal(archive.withEncoding('cp866').archiveSize, packed.length)
   assert.equal(text(archive.read(archive.entries[0], 100).bytes), 'in tgz')
 })
 

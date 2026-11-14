@@ -62,6 +62,12 @@ test('names: UTF-8 flag, valid UTF-8, and legacy code pages with re-decoding', (
   assert.equal(western.entries[0].legacy, false)
 })
 
+test('a UTF-8 flag on bytes that are not UTF-8 falls back to the code page', () => {
+  const archive = parseZip(zip([{ name: cp866('Фото/Дача.png'), flags: 0x800 }]), 'cp866')
+  assert.equal(archive.entries[0].path, 'Фото/Дача.png')
+  assert.equal(archive.legacyNames, true)
+})
+
 test('Info-ZIP Unicode Path extra overrides a legacy name', () => {
   const raw = cp866('Файл.txt'.replace('й', 'и'))
   const unicode = utf8('Файл.txt')
