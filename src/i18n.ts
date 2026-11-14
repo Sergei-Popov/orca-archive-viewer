@@ -33,6 +33,7 @@ const en = {
   empty: 'This archive is empty.',
   noMatches: 'No names contain “{q}”.',
   damaged: 'The archive is damaged or cut off. It shows the files that could be read.',
+  damagedFile: 'The archive is damaged or cut off. It shows the part of the file that could be read.',
   overviewHint: 'Select a file to preview it. ↑ ↓ move, ← → fold, Enter opens an archive inside.',
   comment: 'Comment',
   format: 'Format',
@@ -78,6 +79,12 @@ const en = {
   damagedArchive: 'The archive is damaged.',
   textContent: 'Orca sent this file as text; Archive Viewer needs its raw bytes.',
   noHost: 'This page runs as an Orca custom editor.',
+  tooDeep: 'Archive Viewer opens archives inside archives up to {n} levels deep.',
+  features: {
+    'zstd-window': 'It is Zstandard with a window over 128 MB, more than Archive Viewer unpacks in a tab.',
+    'xz-dictionary': 'It is XZ with a dictionary over 64 MB, more than Archive Viewer unpacks.',
+    'xz-options': 'It is XZ with a SHA-256 check or a BCJ or delta filter, which Archive Viewer cannot unpack.'
+  },
   units: { b: 'B', kb: 'KB', mb: 'MB', gb: 'GB' }
 }
 
@@ -104,6 +111,7 @@ const ru: Strings = {
   empty: 'Архив пуст.',
   noMatches: 'Нет имён, содержащих «{q}».',
   damaged: 'Архив повреждён или обрезан. Показаны файлы, которые удалось прочитать.',
+  damagedFile: 'Архив повреждён или обрезан. Показана часть файла, которую удалось прочитать.',
   overviewHint: 'Выберите файл для просмотра. ↑ ↓ — по списку, ← → — свернуть и раскрыть, Enter — открыть вложенный архив.',
   comment: 'Комментарий',
   format: 'Формат',
@@ -149,6 +157,12 @@ const ru: Strings = {
   damagedArchive: 'Архив повреждён.',
   textContent: 'Orca передала файл как текст, а просмотрщику нужны исходные байты.',
   noHost: 'Эта страница работает как редактор Orca.',
+  tooDeep: 'Archive Viewer открывает вложенные архивы не глубже {n} уровней.',
+  features: {
+    'zstd-window': 'Это Zstandard с окном больше 128 МБ — больше, чем Archive Viewer распаковывает во вкладке.',
+    'xz-dictionary': 'Это XZ со словарём больше 64 МБ — больше, чем распаковывает Archive Viewer.',
+    'xz-options': 'Это XZ с проверкой SHA-256 или фильтром BCJ или delta — такое Archive Viewer не распаковывает.'
+  },
   units: { b: 'Б', kb: 'КБ', mb: 'МБ', gb: 'ГБ' }
 }
 
