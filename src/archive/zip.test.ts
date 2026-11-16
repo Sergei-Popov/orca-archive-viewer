@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
 import { crc32 } from '../codecs/crc32'
-import { concat, utf8, zip } from '../fixtures/build'
+import { type ZipItem, concat, utf8, zip } from '../fixtures/build'
 import { bzip2 } from '../fixtures/bzip2'
 import { zstd } from '../fixtures/zstd'
 import { DamagedError } from '../codecs/sink'
@@ -244,8 +244,8 @@ test('ZIP link targets are read when shown, not while the archive opens', () => 
     frame.set([header & 0xff, (header >> 8) & 0xff, header >> 16, 0x61], 6 + i * 4)
   }
   const symlink = (0o120777 << 16) >>> 0
-  const items = Array.from({ length: 100 }, (_, i) => ({ name: `bomb${i}`, data: frame, method: 93 as const, size: 5, external: symlink }))
-  items.push({ name: 'good', data: utf8('real.txt'), method: 0 as const, size: 8, external: symlink })
+  const items: ZipItem[] = Array.from({ length: 100 }, (_, i) => ({ name: `bomb${i}`, data: frame, method: 93, size: 5, external: symlink }))
+  items.push({ name: 'good', data: utf8('real.txt'), method: 0, size: 8, external: symlink })
   const bytes = zip(items)
   let started = Date.now()
   const archive = parseZip(bytes, 'cp437')
