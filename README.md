@@ -79,6 +79,7 @@ No build step: Orca transpiles the TypeScript in `src/` on load.
 ```sh
 orca plugin dev watch . --check   # load, reload on save, stream logs
 orca plugin test .                # unit tests (src/**/*.test.ts)
+tools/cli-crosscheck.sh           # the decoders against the installed bzip2, zstd and xz, both ways
 npx -p typescript tsc -p .        # type check, after `orca plugin types .`
 orca plugin validate .
 orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the editor
@@ -97,7 +98,9 @@ orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the e
   in the frame headers before fzstd allocates anything.
 - `src/nesting.ts` — depth and memory limits for archives inside archives.
 - `src/tree.ts`, `src/content.ts`, `src/display.ts` — the tree model, content sniffing and
-  formatting, all DOM-free and tested; `src/fixtures/` builds test archives.
+  formatting, all DOM-free and tested.
+- `src/fixtures/` — builds the tests' archives in code, with small test-only bzip2 and
+  Zstandard encoders.
 - `vendor/fflate/` — [fflate](https://github.com/101arrowz/fflate) 0.8.3 (MIT).
 - `vendor/fzstd/` — [fzstd](https://github.com/101arrowz/fzstd) 0.1.1 (MIT), patched (marked
   "Archive Viewer patch") so a streaming window slides without moving all of it after every
