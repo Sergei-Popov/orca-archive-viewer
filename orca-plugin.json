@@ -4,7 +4,7 @@
   "execution": "sandboxed-ui",
   "id": "archive-viewer",
   "name": "Archive Viewer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browse archives in Orca's editor tabs: .zip, .jar, .apk, .whl, .epub and other ZIP files, .tar, .gz, .bz2, .xz and .zst, .tar.gz too. A file tree with sizes and dates, a filter, previews of text, images and hex, archives inside archives, old code page names and saving one file. Read-only, offline.",
   "author": {
     "name": "Sergei Popov",
