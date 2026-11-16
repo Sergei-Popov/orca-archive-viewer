@@ -1,5 +1,8 @@
 import { assert, test } from 'orca/testing'
+import { crc32 } from '../codecs/crc32'
 import { concat, utf8, zip } from '../fixtures/build'
+import { bzip2 } from '../fixtures/bzip2'
+import { zstd } from '../fixtures/zstd'
 import { DamagedError } from '../codecs/sink'
 import { EntryError } from './model'
 import { decodeLegacy } from './names'
@@ -149,10 +152,28 @@ test('dosTime reads local date and time', () => {
   assert.equal(dosTime(0, 0), undefined)
 })
 
-test('a Deflate entry longer than its declared size is damaged', () => {
-  const archive = parseZip(zip([{ name: 'bomb.txt', data: utf8('abc'.repeat(10000)), method: 8, size: 10 }]), 'cp437')
-  assert.equal(archive.entries[0].size, 10)
-  assert.throws(() => archive.read(archive.entries[0], 1 << 20), (e: unknown) => e instanceof EntryError && e.code === 'damaged')
+test('an entry longer than its recorded size is damaged, whatever its method', () => {
+  const plain = utf8('abc'.repeat(10000))
+  const damaged = (e: unknown) => e instanceof EntryError && e.code === 'damaged'
+  // The fixture compresses Deflate itself and stores other methods' data as given.
+  const packed: [string, 0 | 8 | 12 | 93, Uint8Array][] = [
+    ['stored', 0, plain],
+    ['Deflate', 8, plain],
+    ['bzip2', 12, bzip2(plain)],
+    ['Zstandard', 93, zstd(plain)]
+  ]
+  for (const [label, method, data] of packed) {
+    const right = parseZip(zip([{ name: 'a.txt', data, method, crc: crc32(plain), size: plain.length }]), 'cp437')
+    const whole = right.read(right.entries[0], 1 << 20)
+    assert.deepEqual([whole.bytes.length, whole.truncated, whole.crcOk], [plain.length, false, true], label)
+    const start = right.read(right.entries[0], 100)
+    assert.deepEqual([start.bytes.length, start.truncated], [100, true], label)
+    const bomb = parseZip(zip([{ name: 'bomb.txt', data, method, crc: crc32(plain), size: 10 }]), 'cp437')
+    assert.equal(bomb.entries[0].size, 10, label)
+    assert.throws(() => bomb.read(bomb.entries[0], 1 << 20), damaged)
+    // Below the recorded size a read stops before it can tell, as for Deflate: the start is fine.
+    if (method !== 0) assert.equal(bomb.read(bomb.entries[0], 5).truncated, true, label)
+  }
 })
 
 test('a Zstandard entry with a window too large to unpack is unsupported, not damaged', () => {

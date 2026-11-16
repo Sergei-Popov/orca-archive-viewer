@@ -387,17 +387,21 @@ function readRaw(bytes: Uint8Array, raw: Raw, shift: number, limit: number): Rea
   try {
     switch (raw.method) {
       case 0:
+        if (data.length !== raw.size) throw new DamagedError('stored data is not the size the archive records')
         result = { bytes: data.subarray(0, Math.min(data.length, limit)), truncated: data.length > limit }
         break
       case 8:
         result = inflate(data, raw.size, limit)
         break
       case 12:
-        result = bunzip2(data, limit, true)
+      case 93: {
+        // Like inflate: one byte past the recorded size is enough to call the entry damaged.
+        const cap = Math.min(limit, raw.size) + 1
+        const out = raw.method === 12 ? bunzip2(data, cap, true) : unzstd(data, cap, true)
+        if (out.bytes.length > raw.size) throw new DamagedError('data is longer than the size the archive records')
+        result = out.bytes.length > limit ? { bytes: out.bytes.subarray(0, limit), truncated: true } : { bytes: out.bytes, truncated: false }
         break
-      case 93:
-        result = unzstd(data, limit, true)
-        break
+      }
       default:
         throw new EntryError('method', methodName(raw.method))
     }

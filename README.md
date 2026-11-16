@@ -49,7 +49,7 @@ A damaged or cut-off archive shows what could be read with a notice: the entries
 damage, or for a `.gz`, `.bz2`, `.xz` or `.zst` of one file, the part of it before the damage
 (GZIP CRC-32 and size, bzip2 block CRCs and XZ checks are checked). A ZIP cut off before its
 central directory is read from the local headers in front of the cut. A ZIP entry that unpacks
-to more than the size its archive records is damaged.
+to more than the size its archive records is damaged, whatever its method.
 
 ## Keyboard
 

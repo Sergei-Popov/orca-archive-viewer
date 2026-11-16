@@ -39,6 +39,8 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- Stored, bzip2 and Zstandard ZIP entries that unpack to more than their recorded size are
+  damaged, as Deflate entries already were; bzip2 and Zstandard stop one byte past that size.
 - A ZIP cut off before its end record (a partial download) lists the entries in front of the
   cut from their local headers, data descriptors included, with the damage notice; the central
   records that survive the cut still give modes and links.
