@@ -25,21 +25,42 @@ function cstring(b: Uint8Array, at: number, length: number): Uint8Array {
   return b.subarray(at, end)
 }
 
-/** Octal (space or NUL terminated), or base-256 when the high bit of the first byte is set. */
-export function tarNumber(b: Uint8Array, at: number, length: number): number {
-  if (b[at] & 0x80) {
-    let value = b[at] & 0x7f
+/**
+ * A numeric field: octal digits after optional spaces, ended by a space or NUL, or base-256 when
+ * the first byte has its high bit set, negative in two's complement when the next bit is set too
+ * (GNU tar writes pre-1970 times that way). Null when the field holds no digits.
+ */
+export function tarNumber(b: Uint8Array, at: number, length: number): number | null {
+  const lead = b[at]
+  if (lead & 0x80) {
+    if (lead & 0x40) {
+      // Summing the inverted bytes keeps small negative numbers exact; subtracting 256 ** 12 from
+      // the unsigned value would round them away.
+      let inverted = ~lead & 0x3f
+      for (let i = 1; i < length; i++) inverted = inverted * 256 + (~b[at + i] & 0xff)
+      return -(inverted + 1)
+    }
+    let value = lead & 0x3f
     for (let i = 1; i < length; i++) value = value * 256 + b[at + i]
     return value
   }
   let value = 0
+  let digits = 0
   for (let i = at; i < at + length; i++) {
     const c = b[i]
-    if (c === 0x20 && value === 0) continue
+    if (c === 0x20 && digits === 0) continue
     if (c < 0x30 || c > 0x37) break
     value = value * 8 + (c - 0x30)
+    digits++
   }
-  return value
+  return digits ? value : null
+}
+
+/** Seconds since 1970 as milliseconds, when a Date can hold them. */
+function time(seconds: number | null): number | undefined {
+  if (seconds === null || !Number.isFinite(seconds)) return undefined
+  const ms = seconds * 1000
+  return Math.abs(ms) <= 8.64e15 ? ms : undefined
 }
 
 /** PAX records: "<length> <key>=<value>\n". */
@@ -89,7 +110,7 @@ export function parseTar(
     const gnu = ustar && bytes[at + 262] === 0x20 // "ustar  \0": old GNU, no prefix field
     const type = String.fromCharCode(bytes[at + 156] || 0x30)
     const headerPax = { ...globalPax, ...pax }
-    let size = tarNumber(bytes, at + 124, 12)
+    let size = tarNumber(bytes, at + 124, 12) ?? 0
     if (headerPax.size !== undefined) {
       // Only digits: Number('') is 0 and Number('abc') is NaN, which would end the loop silently.
       const paxSize = /^\d{1,15}$/.test(headerPax.size) ? Number(headerPax.size) : NaN
@@ -126,8 +147,8 @@ export function parseTar(
         joined.set(nameBytes, prefix.length + 1)
         nameBytes = joined
       }
-      const mtimePax = headerPax.mtime !== undefined ? Number(headerPax.mtime) : NaN
-      const mtimeField = tarNumber(bytes, at + 136, 12)
+      // PAX times are decimal seconds, possibly with a fraction and a sign.
+      const mtimePax = /^-?\d{1,15}(\.\d+)?$/.test(headerPax.mtime ?? '') ? Number(headerPax.mtime) : null
       raws.push({
         nameBytes,
         paxPath: headerPax.path ?? null,
@@ -136,8 +157,8 @@ export function parseTar(
         type,
         size: type === '5' || type === '1' || type === '2' ? 0 : size,
         dataStart,
-        mtime: Number.isFinite(mtimePax) ? mtimePax * 1000 : mtimeField ? mtimeField * 1000 : undefined,
-        mode: tarNumber(bytes, at + 100, 8)
+        mtime: time(mtimePax) ?? time(tarNumber(bytes, at + 136, 12)),
+        mode: tarNumber(bytes, at + 100, 8) ?? 0
       })
       longName = null
       longLink = null

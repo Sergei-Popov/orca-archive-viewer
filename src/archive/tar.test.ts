@@ -1,11 +1,11 @@
 import { assert, test } from 'orca/testing'
-import { concat, pax, tar, tarHeader, utf8 } from '../fixtures/build'
+import { base256, concat, pax, tar, tarHeader, utf8 } from '../fixtures/build'
 import { bzip2 } from '../fixtures/bzip2'
 import { xz } from '../fixtures/xz'
 import { zstd } from '../fixtures/zstd'
 import { EntryError } from './model'
 import { openArchive } from './open'
-import { parsePax, parseTar } from './tar'
+import { parsePax, parseTar, tarNumber } from './tar'
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 
@@ -123,4 +123,43 @@ test('a tar cut inside a header or inside data is damaged; one without end block
   assert.equal(midData.damaged, true)
   assert.equal(parseTar(first, 'cp437').damaged, false)
   assert.equal(parseTar(concat(tar([{ name: 'a.txt', data: utf8('aaa') }]), utf8('after the end')), 'cp437').damaged, false)
+})
+
+test('base-256 numbers are signed: GNU tar writes pre-1970 times with a 0xff lead', () => {
+  assert.equal(tarNumber(base256(-100000000, 12), 0, 12), -100000000)
+  assert.equal(tarNumber(base256(-1, 12), 0, 12), -1)
+  assert.equal(tarNumber(base256(2 ** 40 + 5, 12), 0, 12), 2 ** 40 + 5)
+  const archive = parseTar(
+    tar([
+      { name: 'old.txt', data: utf8('1966'), mtime: -100000000 },
+      // Past what a Date holds, either way: no date rather than "Invalid Date".
+      { name: 'far.txt', data: utf8('far'), mtime: -(2 ** 52) },
+      { name: 'future.txt', data: utf8('far'), mtime: 2 ** 52 },
+      pax({ mtime: '-100000000.5' }),
+      { name: 'pax.txt', data: utf8('pax') }
+    ]),
+    'cp437'
+  )
+  assert.deepEqual(
+    archive.entries.map((e) => [e.path, e.mtime]),
+    [['old.txt', -100000000000], ['far.txt', undefined], ['future.txt', undefined], ['pax.txt', -100000000500]]
+  )
+  assert.equal(new Date(archive.entries[0].mtime!).toISOString(), '1966-10-31T14:13:20.000Z')
+})
+
+test('an mtime of 0 is 1970-01-01; only an empty field means no date', () => {
+  const empty = new Uint8Array(12)
+  assert.equal(tarNumber(empty, 0, 12), null)
+  assert.equal(tarNumber(utf8('           \0'), 0, 12), null)
+  assert.equal(tarNumber(utf8('00000000000\0'), 0, 12), 0)
+  const archive = parseTar(
+    tar([
+      { name: 'zero.txt', data: utf8('0'), mtime: 0 },
+      { name: 'none.txt', data: utf8('-'), mtime: null },
+      pax({ mtime: '0' }),
+      { name: 'pax-zero.txt', data: utf8('0') }
+    ]),
+    'cp437'
+  )
+  assert.deepEqual(archive.entries.map((e) => [e.path, e.mtime]), [['zero.txt', 0], ['none.txt', undefined], ['pax-zero.txt', 0]])
 })

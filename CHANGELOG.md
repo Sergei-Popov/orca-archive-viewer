@@ -20,6 +20,9 @@ All notable changes to this plugin are documented here. The format follows
 ### Fixed
 
 - The file tree no longer keeps its keyboard focus ring after mouse clicks.
+- TAR dates before 1970 that GNU tar stores in base-256 show their real date instead of
+  "Invalid Date", a date of 0 shows as 1970-01-01 instead of none, and a date past what a
+  calendar can show is left out.
 
 ## [0.1.0] - 2026-11-14
 

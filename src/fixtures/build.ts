@@ -164,7 +164,8 @@ export type TarItem = {
   type?: string
   link?: string
   mode?: number
-  mtime?: number
+  /** Seconds; null leaves the field empty. Negative or over 11 octal digits: base-256. */
+  mtime?: number | null
   prefix?: string
   /** Write the size in base-256. */
   base256?: boolean
@@ -178,6 +179,19 @@ function octal(value: number, length: number): Uint8Array {
   return utf8(value.toString(8).padStart(length - 1, '0') + '\0')
 }
 
+/** GNU base-256: 0x80 then the value, or two's complement with a 0xff lead when negative. */
+export function base256(value: number, length: number): Uint8Array {
+  const out = new Uint8Array(length)
+  let v = value < 0 ? -value - 1 : value
+  for (let i = length - 1; i > 0; i--) {
+    out[i] = v % 256
+    v = Math.floor(v / 256)
+  }
+  if (value < 0) for (let i = 1; i < length; i++) out[i] = ~out[i] & 0xff
+  out[0] = value < 0 ? 0xff : 0x80
+  return out
+}
+
 export function tarHeader(item: TarItem, size: number): Uint8Array {
   const h = new Uint8Array(512)
   const name = typeof item.name === 'string' ? utf8(item.name) : item.name
@@ -185,17 +199,9 @@ export function tarHeader(item: TarItem, size: number): Uint8Array {
   h.set(octal(item.mode ?? 0o644, 8), 100)
   h.set(octal(0, 8), 108)
   h.set(octal(0, 8), 116)
-  if (item.base256) {
-    h[124] = 0x80
-    let v = size
-    for (let i = 135; i > 124; i--) {
-      h[i] = v % 256
-      v = Math.floor(v / 256)
-    }
-  } else {
-    h.set(octal(size, 12), 124)
-  }
-  h.set(octal(item.mtime ?? 1700000000, 12), 136)
+  h.set(item.base256 ? base256(size, 12) : octal(size, 12), 124)
+  const mtime = item.mtime === undefined ? 1700000000 : item.mtime
+  if (mtime !== null) h.set(mtime < 0 || mtime >= 8 ** 11 ? base256(mtime, 12) : octal(mtime, 12), 136)
   h.set(utf8('        '), 148)
   h[156] = (item.type ?? '0').charCodeAt(0)
   if (item.link) h.set(utf8(item.link), 157)
@@ -223,14 +229,14 @@ export function tar(items: TarItem[], options: { end?: boolean } = {}): Uint8Arr
   return concat(...parts)
 }
 
-/** A PAX extended header item carrying `records`. */
-export function pax(records: Record<string, string>): TarItem {
+/** A PAX extended header item carrying `records`; pairs keep their order and repeated keys. */
+export function pax(records: Record<string, string> | [string, string][], type = 'x'): TarItem {
   let body = ''
-  for (const [key, value] of Object.entries(records)) {
+  for (const [key, value] of Array.isArray(records) ? records : Object.entries(records)) {
     const text = ` ${key}=${value}\n`
     let length = text.length + 1
     while (String(length).length + utf8(text).length !== length) length = String(length).length + utf8(text).length
     body += `${length}${text}`
   }
-  return { name: 'PaxHeader', type: 'x', data: utf8(body) }
+  return { name: 'PaxHeader', type, data: utf8(body) }
 }
