@@ -39,6 +39,11 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- Very deep paths no longer crash the tab: a name is cut at 1,024 folders or 4,096 characters
+  and the archive marked damaged (a 313-byte .tar.gz with one path 70,000 folders deep ran the
+  frame out of memory), the tree finds folders by name instead of by whole path, and all folder
+  paths of one tree together stay under 64 Mi characters. Revealing a file and keeping open
+  folders across a code page switch take time in line with the path's length, not its square.
 - ZIP symbolic link targets are read when a row or the preview shows them, once per local
   header, instead of all while the archive opens and again on each code page switch: a 70 KB
   crafted ZIP used to freeze the tab for 12 seconds. Zstandard in a size-capped read stops as

@@ -353,12 +353,15 @@ function build(
     legacyNames ||= name.legacy
     return name
   }
+  let cut = false
   const entries: Entry[] = raws.map((raw, index) => {
     const name = raw.paxPath !== null ? { name: raw.paxPath, legacy: false } : decode(raw.nameBytes)
     const dir = raw.type === '5' || raw.type === 'D' || /\/$/.test(name.name)
+    const normal = normalizePath(name.name, false)
+    cut ||= normal.cut
     const entry: Entry = {
       index,
-      path: normalizePath(name.name, false),
+      path: normal.path,
       dir,
       size: raw.size,
       mtime: raw.mtime,
@@ -398,13 +401,14 @@ function build(
     archiveSize,
     legacyNames,
     encoding,
-    damaged,
+    // A path cut at the length limit means names the archive should not have.
+    damaged: damaged || cut,
     read(entry, limit) {
       let target = entry
       // A hard link stores no data: read the file it links to, as tar and Python's tarfile do:
       // the last entry at that path before the link, on each hop.
       for (let hops = 0; target.link?.hard && hops < 8; hops++) {
-        const linked = before(normalizePath(target.link.target, false), target.index)
+        const linked = before(normalizePath(target.link.target, false).path, target.index)
         if (!linked) throw new EntryError('missing', target.link.target)
         target = linked
       }

@@ -19,11 +19,23 @@ export type Node = {
   mtime?: number
   /** Packed sizes are known for every file below. */
   hasPacked: boolean
+  /** The root only: FOLDER_BUDGET ran out, so some entries hang under a folder above their own. */
+  cut?: boolean
 }
 
 export type Row = { node: Node; depth: number }
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+/**
+ * Most characters the folder paths of one tree may hold together. Every folder keeps its whole
+ * path, so a folder 1,000 deep costs 1,000 prefixes: Orca's V8 copies each one (Node's shares
+ * them, which hides the cost in tests), and a few thousand crafted entries that deep would take
+ * gigabytes. Past the budget no new folder is made: an entry hangs under the deepest folder
+ * already there, named by the rest of its path, and the tree is marked cut. Real archives use a
+ * few megabytes at most.
+ */
+export const FOLDER_BUDGET = 64 * 1024 * 1024
 
 function folder(name: string, path: string): Node {
   return { name, path, dir: true, children: [], size: 0, packed: 0, files: 0, folders: 0, hasPacked: true }
@@ -31,32 +43,48 @@ function folder(name: string, path: string): Node {
 
 export function buildTree(entries: readonly Entry[]): Node {
   const root = folder('', '')
-  const folders = new Map<string, Node>([['', root]])
-  // Archives can nest folders thousands deep, so none of the walks here recurse.
+  // Subfolders by name. Archives can nest folders hundreds deep, so none of the walks here
+  // recurse, and the walk down goes by name so that only a new folder copies its path.
+  const subfolders = new Map<Node, Map<string, Node>>()
+  let spent = 0
+  /** The folder at `path`, made as needed; past the budget, the deepest one on the way to it. */
   const ensure = (path: string): Node => {
-    const found = folders.get(path)
-    if (found) return found
-    const missing: string[] = []
-    let at = path
-    while (!folders.has(at)) {
-      missing.push(at)
-      const slash = at.lastIndexOf('/')
-      at = slash < 0 ? '' : at.slice(0, slash)
+    let node = root
+    for (let start = 0; path && start <= path.length; ) {
+      const slash = path.indexOf('/', start)
+      const end = slash < 0 ? path.length : slash
+      const name = path.slice(start, end)
+      let names = subfolders.get(node)
+      let next = names?.get(name)
+      if (!next) {
+        if (spent + end > FOLDER_BUDGET) {
+          root.cut = true
+          return node
+        }
+        spent += end
+        next = folder(name, path.slice(0, end))
+        node.children.push(next)
+        if (!names) subfolders.set(node, (names = new Map()))
+        names.set(name, next)
+      }
+      node = next
+      start = end + 1
     }
-    let parent = folders.get(at)!
-    for (let i = missing.length - 1; i >= 0; i--) {
-      const node = folder(missing[i].slice(missing[i].lastIndexOf('/') + 1), missing[i])
-      parent.children.push(node)
-      folders.set(missing[i], node)
-      parent = node
-    }
-    return parent
+    return node
   }
+  /** `path` below `parent`: one name, or after the budget ran out, the rest of the path. */
+  const rest = (parent: Node, path: string): string => path.slice(parent.path ? parent.path.length + 1 : 0)
   const files = new Map<string, Node>()
   for (const entry of entries) {
     if (!entry.path) continue
     if (entry.dir) {
-      const node = ensure(entry.path)
+      let node = ensure(entry.path)
+      if (node.path !== entry.path) {
+        // Past the budget: an empty folder row, which nothing else can go into.
+        const leaf = folder(rest(node, entry.path), entry.path)
+        node.children.push(leaf)
+        node = leaf
+      }
       node.entry = entry
       node.mtime = entry.mtime
       continue
@@ -74,7 +102,7 @@ export function buildTree(entries: readonly Entry[]): Node {
       continue
     }
     const node: Node = {
-      name: entry.path.slice(slash + 1),
+      name: rest(parent, entry.path),
       path: entry.path,
       dir: false,
       entry,
@@ -183,19 +211,30 @@ export function visibleRows(root: Node, expanded: ReadonlySet<string>, filter: s
 /** The node at `path`, or null. */
 export function findNode(root: Node, path: string): Node | null {
   if (!path) return root
-  let node: Node | undefined = root
-  for (const part of path.split('/')) {
-    node = node?.children.find((child) => child.name === part)
-    if (!node) return null
+  let node: Node = root
+  const parts = path.split('/')
+  for (let i = 0; i < parts.length; i++) {
+    const next: Node | undefined = node.children.find((child) => child.name === parts[i])
+    if (next) {
+      node = next
+      continue
+    }
+    // A tree past its folder budget names some entries by the rest of their path.
+    const tail = parts.slice(i).join('/')
+    return node.children.find((child) => child.path === path && child.name === tail) ?? null
   }
   return node
 }
 
-/** The folders that contain `path`, outermost first. */
+/** The folders that contain `path`, outermost first; each prefix extends the one before. */
 export function ancestors(path: string): string[] {
   const parts = path.split('/')
   const out: string[] = []
-  for (let i = 1; i < parts.length; i++) out.push(parts.slice(0, i).join('/'))
+  let prefix = ''
+  for (let i = 0; i < parts.length - 1; i++) {
+    prefix = i ? `${prefix}/${parts[i]}` : parts[i]
+    out.push(prefix)
+  }
   return out
 }
 
@@ -214,8 +253,13 @@ export function renamedPaths(before: readonly Entry[], after: readonly Entry[]):
     const from = entry.path.split('/')
     const to = renamed.split('/')
     if (from.length !== to.length) continue
-    for (let depth = 1; depth <= from.length; depth++) {
-      out.set(from.slice(0, depth).join('/'), to.slice(0, depth).join('/'))
+    // Each prefix extends the one before, so a path costs its length, not its length squared.
+    let a = ''
+    let b = ''
+    for (let depth = 0; depth < from.length; depth++) {
+      a = depth ? `${a}/${from[depth]}` : from[depth]
+      b = depth ? `${b}/${to[depth]}` : to[depth]
+      out.set(a, b)
     }
   }
   return out

@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
 import type { Entry } from './archive/model'
-import { ancestors, buildTree, findNode, folderPaths, renamedPaths, visibleRows } from './tree'
+import { FOLDER_BUDGET, ancestors, buildTree, findNode, folderPaths, renamedPaths, visibleRows } from './tree'
 
 const file = (index: number, path: string, size: number, packed?: number): Entry => ({ index, path, dir: false, size, packed })
 
@@ -79,8 +79,9 @@ test('a filter over a folder of 200,000 matches returns them all', () => {
   assert.equal(visibleRows(root, new Set(), 'nothing').length, 0)
 })
 
-test('folders nested 20,000 deep build, filter, expand and list without recursion', () => {
-  const depth = 20000
+test('folders nested 8,000 deep build, filter, expand and list without recursion', () => {
+  // 8,000 is about as deep as one path gets within FOLDER_BUDGET; parsers stop at 1,024.
+  const depth = 8000
   const deep: Entry[] = []
   let path = ''
   for (let d = 0; d < depth; d++) {
@@ -90,11 +91,40 @@ test('folders nested 20,000 deep build, filter, expand and list without recursio
   // The deepest file first, so every folder above it is made in one go.
   deep.reverse()
   const root = buildTree(deep)
-  assert.equal(root.files, 20)
+  assert.equal(root.cut, undefined)
+  assert.equal(root.files, 8)
   assert.equal(root.folders, depth)
-  assert.equal(visibleRows(root, new Set(), 'x19999').length, depth + 1)
+  assert.equal(visibleRows(root, new Set(), 'x7999').length, depth + 1)
   const all = folderPaths(root)
   assert.equal(all.length, depth)
-  assert.equal(visibleRows(root, new Set(all), '').length, depth + 20)
+  assert.equal(visibleRows(root, new Set(all), '').length, depth + 8)
   assert.deepEqual(visibleRows(root, new Set(['d']), '').map((r) => r.node.path), ['d', 'd/d'])
+  assert.equal(ancestors(deep[0].path).length, depth)
+  assert.equal(ancestors(deep[0].path)[depth - 1], deep[0].path.slice(0, -'/x7999.txt'.length))
+})
+
+test('folder paths stay within their budget, whatever the engine shares', () => {
+  // Every folder keeps its whole path. Node's V8 shares those prefixes with the full string, so
+  // memory alone would not show the cost here; Orca's V8 copies them, and 300 entries like these
+  // held 651 MiB there before the budget. So the characters are counted instead.
+  const segments = Array(1023).fill('abc').join('/')
+  const many: Entry[] = Array.from({ length: 300 }, (_, i) => file(i, `r${i}/${segments}/f.txt`, 1))
+  many.push({ index: 300, path: `r299/${segments}/dir`, dir: true, size: 0 })
+  const started = Date.now()
+  const root = buildTree(many)
+  assert.ok(Date.now() - started < 2000, `${Date.now() - started} ms`)
+  assert.equal(root.cut, true)
+  let held = 0
+  for (const path of folderPaths(root)) held += path.length
+  // Plus the empty folder row made past the budget, which reuses its entry's own path string.
+  const extra = many[300].path.length
+  assert.ok(held <= FOLDER_BUDGET + extra && held > FOLDER_BUDGET / 2, `${held} characters`)
+  // Every entry is still in the tree once, found by its path, and matched by the filter.
+  assert.equal(root.files, 300)
+  for (const entry of many) assert.equal(findNode(root, entry.path)?.entry, entry, entry.path)
+  assert.equal(visibleRows(root, new Set(), 'f.txt').filter((row) => !row.node.dir).length, 300)
+  // Past the budget an entry hangs under the deepest folder made, named by the rest of its path.
+  const last = findNode(root, many[299].path)!
+  assert.ok(last.name.endsWith('/f.txt') || last.name === many[299].path, last.name.slice(0, 40))
+  assert.equal(findNode(root, many[300].path)?.dir, true)
 })

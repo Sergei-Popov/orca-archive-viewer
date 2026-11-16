@@ -362,7 +362,8 @@ export class ArchiveView {
 
     this.encodingField.hidden = !archive.legacyNames
     this.encodingSelect.value = archive.encoding
-    this.notice.hidden = !archive.damaged
+    // A tree past its folder budget is shown as damaged too: only crafted names get there.
+    this.notice.hidden = !archive.damaged && !root.cut
     // A damaged .gz of one file shows the part of that file that came before the damage.
     this.noticeText.textContent = archive.kind === 'single' ? t.damagedFile : t.damaged
     const folders = root.folders > 0

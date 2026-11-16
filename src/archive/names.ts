@@ -82,19 +82,35 @@ export function defaultLegacyEncoding(locale: string | undefined): LegacyEncodin
   return (locale ?? '').toLowerCase().startsWith('ru') ? 'cp866' : 'cp437'
 }
 
+/** Real file systems stop at 4 KiB paths (Linux PATH_MAX); longer or deeper names are cut. */
+export const MAX_PATH_LENGTH = 4096
+export const MAX_PATH_SEGMENTS = 1024
+
 /**
  * A stored path as the tree shows it: `/` separators, no leading `/` or `./`, no empty
- * segments, no trailing slash.
+ * segments, no trailing slash. A path past MAX_PATH_SEGMENTS segments or MAX_PATH_LENGTH
+ * characters is cut there and `cut` is set: every folder of a path costs the tree its whole
+ * prefix, so a crafted name 70,000 folders deep would take gigabytes.
  */
-export function normalizePath(path: string, backslashes: boolean): string {
-  let p = backslashes ? path.replace(/\\/g, '/') : path
-  p = p.replace(/\/{2,}/g, '/')
-  while (p.startsWith('./')) p = p.slice(2)
-  p = p.replace(/^\/+/, '').replace(/\/+$/, '')
-  return p
-    .split('/')
-    .filter((segment) => segment !== '.' && segment !== '')
-    .join('/')
+export function normalizePath(path: string, backslashes: boolean): { path: string; cut: boolean } {
+  const segments: string[] = []
+  let length = -1
+  for (const segment of (backslashes ? path.replace(/\\/g, '/') : path).split('/')) {
+    if (segment === '' || segment === '.') continue
+    const room = MAX_PATH_LENGTH - length - 1
+    if (segments.length === MAX_PATH_SEGMENTS || segment.length > room) {
+      if (segments.length < MAX_PATH_SEGMENTS && room > 0) {
+        // Never cut a character in two: a lone surrogate would show as a replacement mark.
+        const code = segment.charCodeAt(room - 1)
+        const kept = segment.slice(0, code >= 0xd800 && code < 0xdc00 ? room - 1 : room)
+        if (kept) segments.push(kept)
+      }
+      return { path: segments.join('/'), cut: true }
+    }
+    segments.push(segment)
+    length += segment.length + 1
+  }
+  return { path: segments.join('/'), cut: false }
 }
 
 /** The last path segment. */

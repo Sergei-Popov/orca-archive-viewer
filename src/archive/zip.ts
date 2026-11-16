@@ -318,6 +318,7 @@ function build(
   links: LinkCache
 ): Archive {
   let legacyNames = false
+  let cut = false
   const entries: Entry[] = raws.map((raw, index) => {
     const decoded = raw.unicodePath ?? null
     const name = decoded === null ? decodeName(raw.nameBytes, raw.utf8Flag, encoding) : { name: decoded, legacy: false }
@@ -327,9 +328,11 @@ function build(
       /[/\\]$/.test(name.name) ||
       (raw.mode !== undefined && (raw.mode & 0o170000) === 0o040000) ||
       (raw.dosDir && raw.size === 0)
+    const normal = normalizePath(name.name, raw.backslashes)
+    cut ||= normal.cut
     const entry: Entry = {
       index,
-      path: normalizePath(name.name, raw.backslashes),
+      path: normal.path,
       dir,
       size: raw.size,
       packed: raw.packed,
@@ -367,7 +370,8 @@ function build(
     legacyNames,
     encoding,
     comment,
-    damaged,
+    // A path cut at the length limit means names the archive should not have.
+    damaged: damaged || cut,
     read(entry, limit) {
       const raw = raws[entry.index]
       if (!raw) throw new EntryError('missing')
