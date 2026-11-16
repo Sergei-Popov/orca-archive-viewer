@@ -121,7 +121,9 @@ var rzfh = function (dat, w) {
         if (ws > 2145386496)
             err(1);
         // Archive Viewer patch: a streaming window (no w) gets room to slide into, see slw.
-        var wl = w == 1 ? (fss || ws) : w ? 0 : ws;
+        // Archive Viewer patch: w is the number 1 or the output buffer, compared without
+        // coercion: `w == 1` joined the whole buffer into a string, which threw past 256 MiB.
+        var wl = w === 1 ? (fss || ws) : w ? 0 : ws;
         var buf = new u8(wl + (w ? 0 : wsl(ws)) + 12);
         buf[0] = 1, buf[4] = 4, buf[8] = 8;
         return {
@@ -129,7 +131,7 @@ var rzfh = function (dat, w) {
             y: 0,
             l: 0,
             d: di,
-            w: (w && w != 1) ? w : buf.subarray(12, 12 + wl),
+            w: (w && w !== 1) ? w : buf.subarray(12, 12 + wl),
             a: w ? null : buf.subarray(12),
             q: 0,
             e: ws,

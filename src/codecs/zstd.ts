@@ -5,12 +5,19 @@
 // 0.1.1 moved the whole window after every block).
 
 import { Decompress, decompress } from '../../vendor/fzstd/fzstd.mjs'
-import { DamagedError, Sink, TooLargeError, UnsupportedDataError, asDecodeError, feed } from './sink'
+import { DamagedError, Sink, type StreamResult, TooLargeError, UnsupportedDataError, asDecodeError, feedSteps } from './sink'
+import { type Steps, run } from './steps'
 
 /** Largest window the viewer unpacks; zstd uses at most 8 MiB below level 20 (`--ultra`). */
 export const MAX_ZSTD_WINDOW = 128 * 1024 * 1024
 
 const MAX_BLOCK = 128 * 1024
+
+/** Frames that record at most this size are unpacked in one call; larger ones are streamed. */
+const ONE_SHOT = 4 * 1024 * 1024
+
+/** Thrown from fzstd's output callback to stop it once the sink is full. */
+const FULL = new Error('zstd output is full')
 
 export type ZstdFrame = {
   start: number
@@ -23,6 +30,8 @@ export type ZstdFrame = {
   size: number | null
   /** Most bytes the blocks can produce. */
   most: number
+  /** The data ends inside this frame. */
+  cut?: boolean
 }
 
 const u32 = (b: Uint8Array, at: number) =>
@@ -37,21 +46,33 @@ function readLE(b: Uint8Array, at: number, n: number): number {
 
 /** Every frame of the data, found from the headers and block headers without decoding. */
 export function zstdFrames(data: Uint8Array): ZstdFrame[] {
+  const { frames, error } = scanFrames(data)
+  if (error) throw error
+  return frames
+}
+
+/**
+ * The frames up to the first damage, and that damage. A frame whose header is whole but whose
+ * blocks or checksum run past the end of the data is kept, marked `cut`, so its blocks can still
+ * be decoded.
+ */
+function scanFrames(data: Uint8Array): { frames: ZstdFrame[]; error: DamagedError | null } {
   const frames: ZstdFrame[] = []
   let at = 0
+  const fail = (message: string) => ({ frames, error: new DamagedError(message) })
   while (at < data.length) {
-    if (at + 8 > data.length) throw new DamagedError('zstd data ends early')
+    if (at + 8 > data.length) return fail('zstd data ends early')
     const magic = u32(data, at)
     if (magic >>> 4 === 0x184d2a5) {
       const end = at + 8 + u32(data, at + 4)
-      if (end > data.length) throw new DamagedError('zstd skippable frame ends early')
+      if (end > data.length) return fail('zstd skippable frame ends early')
       frames.push({ start: at, end, skippable: true, window: 0, size: null, most: 0 })
       at = end
       continue
     }
-    if (magic !== 0xfd2fb528) throw new DamagedError('not zstd data')
+    if (magic !== 0xfd2fb528) return fail('not zstd data')
     const descriptor = data[at + 4]
-    if (descriptor & 8) throw new DamagedError('reserved zstd header bit')
+    if (descriptor & 8) return fail('reserved zstd header bit')
     const fcsFlag = descriptor >> 6
     const single = (descriptor >> 5) & 1
     const checksum = (descriptor >> 2) & 1
@@ -65,55 +86,70 @@ export function zstdFrames(data: Uint8Array): ZstdFrame[] {
     }
     p += dictBytes
     const fcsBytes = fcsFlag ? 1 << fcsFlag : single
-    if (p + fcsBytes > data.length) throw new DamagedError('zstd header ends early')
+    if (p + fcsBytes > data.length) return fail('zstd header ends early')
     let size: number | null = null
     if (fcsBytes) size = readLE(data, p, fcsBytes) + (fcsFlag === 1 ? 256 : 0)
     p += fcsBytes
     if (single) window = size ?? 0
     let most = 0
+    const cut = () => {
+      frames.push({ start: at, end: data.length, skippable: false, window, size, most, cut: true })
+      return fail('zstd data ends early')
+    }
     for (;;) {
-      if (p + 3 > data.length) throw new DamagedError('zstd data ends early')
+      if (p + 3 > data.length) return cut()
       const header = data[p] | (data[p + 1] << 8) | (data[p + 2] << 16)
       const last = header & 1
       const type = (header >> 1) & 3
       const blockSize = header >>> 3
       p += 3
-      if (type === 3) throw new DamagedError('reserved zstd block type')
-      if (type !== 1 && blockSize > MAX_BLOCK) throw new DamagedError('zstd block too large')
+      if (type === 3) return fail('reserved zstd block type')
+      if (type !== 1 && blockSize > MAX_BLOCK) return fail('zstd block too large')
       p += type === 1 ? 1 : blockSize
       most += type === 2 ? MAX_BLOCK : blockSize
-      if (p > data.length) throw new DamagedError('zstd data ends early')
+      if (p > data.length) return cut()
       if (last) break
     }
+    if (size !== null && size > most) return fail('zstd content size larger than its blocks')
     p += checksum * 4
-    if (p > data.length) throw new DamagedError('zstd checksum missing')
-    if (size !== null && size > most) throw new DamagedError('zstd content size larger than its blocks')
+    if (p > data.length) return cut()
     frames.push({ start: at, end: p, skippable: false, window, size, most })
     at = p
   }
-  return frames
+  return { frames, error: null }
 }
 
 /**
  * Every frame of Zstandard data, joined; `truncate` keeps the first `limit` bytes instead of
- * throwing. Throws `UnsupportedDataError` for a window over `maxWindow`.
+ * throwing. Throws `UnsupportedDataError` for a window over `maxWindow`. `partial`: damaged or
+ * cut-off data returns what the frames before the damage, and the blocks of a cut-off frame,
+ * unpack to.
  */
 export function unzstd(
   data: Uint8Array,
   limit: number,
   truncate = false,
-  maxWindow = MAX_ZSTD_WINDOW
-): { bytes: Uint8Array; truncated: boolean } {
-  let frames: ZstdFrame[]
-  try {
-    frames = zstdFrames(data)
-  } catch (error) {
-    throw asDecodeError(error, 'zstd')
-  }
+  maxWindow = MAX_ZSTD_WINDOW,
+  partial = false
+): StreamResult {
+  return run(unzstdSteps(data, limit, truncate, maxWindow, partial))
+}
+
+/** unzstd in steps: a frame up to ONE_SHOT bytes, or 64 KiB of a larger frame's input, each. */
+export function* unzstdSteps(
+  data: Uint8Array,
+  limit: number,
+  truncate = false,
+  maxWindow = MAX_ZSTD_WINDOW,
+  partial = false
+): Steps<StreamResult> {
+  const { frames, error } = scanFrames(data)
+  if (error && !partial) throw error
   if (frames.some((frame) => !frame.skippable && frame.window > maxWindow)) {
     throw new UnsupportedDataError('zstd-window')
   }
-  const known = frames.every((frame) => frame.skippable || frame.size !== null)
+  // A cut frame's size is not checked against its blocks, so it does not size the buffer.
+  const known = frames.every((frame) => frame.skippable || (frame.size !== null && !frame.cut))
   const declared = frames.reduce((sum, frame) => sum + (frame.size ?? 0), 0)
   const sink = new Sink(limit, truncate, known ? declared : 0)
   try {
@@ -122,17 +158,42 @@ export function unzstd(
       if (sink.full) break
       const bytes = data.subarray(frame.start, frame.end)
       const room = limit - sink.total
-      if (frame.size !== null && frame.size <= room) {
+      if (!frame.cut && frame.size !== null && frame.size <= room && frame.size <= ONE_SHOT) {
         sink.push(decompress(bytes, new Uint8Array(frame.size)))
+        yield
         continue
       }
-      if (frame.size !== null && !truncate) throw new TooLargeError(limit)
-      // Unknown size, or only the start of a long frame is wanted: stream it.
-      const stream = new Decompress((chunk) => sink.push(chunk))
-      feed(bytes, (chunk, final) => stream.push(chunk, final), sink)
+      if (!frame.cut && frame.size !== null && frame.size > room && !truncate) throw new TooLargeError(limit)
+      // A larger frame is streamed too, so the work comes in steps; the sink, sized from the
+      // frames, still holds it in one buffer, and its size is checked against the header.
+      const before = sink.total
+      // Unknown size, only the start of a long frame is wanted, or the frame is cut off (never
+      // pushed as final, so its whole blocks come out): stream it. A slice of input can hold far
+      // more than is wanted (an RLE block is 128 KiB for 4 bytes), so the decoder is stopped as
+      // soon as the sink is full rather than left to finish the slice.
+      const stream = new Decompress((chunk) => {
+        sink.push(chunk)
+        if (sink.full) throw FULL
+      })
+      try {
+        yield* feedSteps(bytes, (chunk, final) => stream.push(chunk, final && !frame.cut), sink)
+      } catch (stop) {
+        if (stop !== FULL) throw stop
+      }
+      if (!frame.cut && frame.size !== null && !sink.full && sink.total - before !== frame.size) {
+        throw new DamagedError('zstd frame is not the size it records')
+      }
     }
-  } catch (error) {
-    throw asDecodeError(error, 'zstd')
+  } catch (caught) {
+    const failure = asDecodeError(caught, 'zstd')
+    if (partial && failure instanceof DamagedError && sink.total > 0) {
+      return { bytes: sink.result(), truncated: false, damaged: true }
+    }
+    throw failure
   }
-  return { bytes: sink.result(), truncated: sink.full }
+  if (error && !sink.full) {
+    if (sink.total === 0) throw error
+    return { bytes: sink.result(), truncated: false, damaged: true }
+  }
+  return { bytes: sink.result(), truncated: sink.full, damaged: false }
 }

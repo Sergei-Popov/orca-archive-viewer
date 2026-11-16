@@ -33,12 +33,18 @@ export function detect(bytes: Uint8Array): Magic {
   return 'unknown'
 }
 
-/** A TAR header block: its checksum matches (ustar magic is optional for V7 archives). */
+/**
+ * A TAR header block: its checksum matches (ustar magic is optional for V7 archives). Zeros at
+ * the start are an empty archive only when nothing but zeros follows: a disk image (ext4, an ISO)
+ * starts with zeros too, and is a single file.
+ */
 export function isTar(bytes: Uint8Array): boolean {
   if (bytes.length < 512) return false
   if (isZeroBlock(bytes, 0)) {
-    // An empty archive is two zero blocks.
-    return bytes.length >= 1024 && isZeroBlock(bytes, 512)
+    // An empty archive is at least two zero blocks.
+    if (bytes.length < 1024) return false
+    for (let i = 512; i < bytes.length; i++) if (bytes[i] !== 0) return false
+    return true
   }
   return tarChecksumOk(bytes, 0)
 }

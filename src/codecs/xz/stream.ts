@@ -18,6 +18,7 @@
 import { crc32 } from '../crc32'
 import { DamagedError, UnsupportedDataError } from '../sink'
 import { crc64 } from './crc64'
+import type { Steps } from '../steps'
 import { Lzma2Decoder, type Output } from './lzma2'
 
 /** Largest LZMA2 dictionary the viewer accepts: `xz -9` uses 64 MiB. */
@@ -63,14 +64,52 @@ function vli(b: Uint8Array, at: number, end: number): [number, number] {
 }
 
 /**
- * Every Stream of the data with its Stream Padding (xz_dec_catrun), decoded into `out`. Stops
- * early once `out` is full in truncate mode.
+ * What the data unpacks to by its Indexes: each Stream ends in a Footer that gives the size of
+ * the Index before it, which lists every Block's sizes. Walked from the end, Stream by Stream,
+ * so the output can be allocated once. 0 when anything does not fit (a cut file, damage, data
+ * that is not XZ): it is only a size hint, and the decoder checks everything again.
  */
-export function decodeXz(data: Uint8Array, out: Output): void {
+export function indexedSize(data: Uint8Array): number {
+  let end = data.length
+  let total = 0
+  while (end > 0) {
+    // Stream Padding before the end, in whole groups of four zero bytes.
+    while (end >= 4 && le32(data, end - 4) === 0) end -= 4
+    const footer = end - STREAM_HEADER_SIZE
+    if (footer < STREAM_HEADER_SIZE || data[end - 2] !== FOOTER_MAGIC[0] || data[end - 1] !== FOOTER_MAGIC[1]) return 0
+    if (crc32(data.subarray(footer + 4, footer + 10)) !== le32(data, footer)) return 0
+    const index = footer - (le32(data, footer + 4) + 1) * 4
+    if (index < STREAM_HEADER_SIZE || data[index] !== 0) return 0
+    let blocks = 0
+    try {
+      let [count, at] = vli(data, index + 1, footer)
+      for (; count > 0; count--) {
+        let unpadded: number
+        let uncompressed: number
+        ;[unpadded, at] = vli(data, at, footer)
+        ;[uncompressed, at] = vli(data, at, footer)
+        blocks += Math.ceil(unpadded / 4) * 4
+        total += uncompressed
+      }
+    } catch {
+      return 0
+    }
+    const start = index - blocks - STREAM_HEADER_SIZE
+    if (start < 0 || HEADER_MAGIC.some((byte, i) => data[start + i] !== byte)) return 0
+    end = start
+  }
+  return total
+}
+
+/**
+ * Every Stream of the data with its Stream Padding (xz_dec_catrun), decoded into `out`. Stops
+ * early once `out` is full in truncate mode. Yields after each LZMA2 chunk (see ../steps.ts).
+ */
+export function* decodeXz(data: Uint8Array, out: Output): Steps<void> {
   const lzma2 = new Lzma2Decoder(out)
   let at = 0
   for (;;) {
-    at = decodeStream(data, at, out, lzma2)
+    at = yield* decodeStream(data, at, out, lzma2)
     if (at < 0) return
     // Stream Padding: zero bytes, a multiple of four, before the next Stream or the end.
     const padding = at
@@ -81,7 +120,7 @@ export function decodeXz(data: Uint8Array, out: Output): void {
 }
 
 /** dec_main for one Stream from `data[at]`: returns the position after its Footer, or -1. */
-function decodeStream(data: Uint8Array, at: number, out: Output, lzma2: Lzma2Decoder): number {
+function* decodeStream(data: Uint8Array, at: number, out: Output, lzma2: Lzma2Decoder): Steps<number> {
   // dec_stream_header
   if (at + STREAM_HEADER_SIZE > data.length) throw endsEarly()
   if (HEADER_MAGIC.some((byte, i) => data[at + i] !== byte)) throw new DamagedError('not xz data')
@@ -138,7 +177,7 @@ function decodeStream(data: Uint8Array, at: number, out: Output, lzma2: Lzma2Dec
     const start = out.pos
     const dataStart = at
     lzma2.reset(dictSize)
-    const end = lzma2.run(data, at)
+    const end = yield* lzma2.run(data, at)
     if (end < 0) return -1
     const compressed = end - dataStart
     const uncompressed = out.pos - start

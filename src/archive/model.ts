@@ -59,6 +59,9 @@ export type Archive = {
   entries: Entry[]
   /** Size of the archive file itself. */
   archiveSize: number
+  /** Memory this archive keeps beyond the file it was read from: the buffer a compressed
+   *  stream was unpacked into (its byteLength), or 0. */
+  unpacked: number
   /** Some names have no UTF-8 marking and were decoded with `encoding`. */
   legacyNames: boolean
   encoding: LegacyEncoding

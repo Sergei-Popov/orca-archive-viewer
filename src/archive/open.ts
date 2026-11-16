@@ -1,11 +1,12 @@
 // Turns bytes into an Archive: ZIP and TAR directly; GZIP, bzip2, XZ and Zstandard are unpacked
 // first and show the TAR inside, or a single file when there is none.
 
-import { bunzip2 } from '../codecs/bzip2'
-import { gunzip, gzipHeader } from '../codecs/deflate'
+import { bunzip2Steps } from '../codecs/bzip2'
+import { gunzipSteps, gzipHeader } from '../codecs/deflate'
 import { DamagedError } from '../codecs/sink'
-import { unxz } from '../codecs/xz'
-import { unzstd } from '../codecs/zstd'
+import { type Pacing, type Steps, run, runAsync } from '../codecs/steps'
+import { unxzSteps } from '../codecs/xz'
+import { MAX_ZSTD_WINDOW, unzstdSteps } from '../codecs/zstd'
 import { type Magic, detect, isTar } from './detect'
 import { type Archive, EntryError } from './model'
 import { type LegacyEncoding, baseName, decodeName } from './names'
@@ -55,6 +56,14 @@ export type OpenOptions = {
   name?: string
   /** Unpacked size limit for compressed streams. */
   limit?: number
+  /** Unpack a compressed stream in steps that give the thread back, and stop (throwing
+   *  `CancelledError`) once `pacing.cancelled()` is true. Without it the stream unpacks in one go. */
+  pacing?: Pacing
+}
+
+/** The name of an archive format the viewer knows but does not open (7-Zip, RAR…), or null. */
+export function unsupportedFormat(bytes: Uint8Array): string | null {
+  return UNSUPPORTED[detect(bytes)] ?? null
 }
 
 /** True for bytes the viewer can open as an archive (used for nested archives). */
@@ -76,13 +85,16 @@ export async function openArchive(bytes: Uint8Array, options: OpenOptions): Prom
     throw new NotArchiveError()
   }
 
-  let inner: Uint8Array
-  // GZIP keeps what it unpacked before damage (a cut download) and says so.
-  let damaged = false
-  if (magic === 'gzip') ({ bytes: inner, damaged } = gunzip(bytes, limit))
-  else if (magic === 'bzip2') inner = bunzip2(bytes, limit).bytes
-  else if (magic === 'xz') inner = unxz(bytes, limit).bytes
-  else inner = unzstd(bytes, limit).bytes
+  // Every decoder keeps what it unpacked before damage (a cut download) and says so.
+  const steps: Steps<{ bytes: Uint8Array; damaged: boolean }> =
+    magic === 'gzip'
+      ? gunzipSteps(bytes, limit)
+      : magic === 'bzip2'
+        ? bunzip2Steps(bytes, limit, false, true)
+        : magic === 'xz'
+          ? unxzSteps(bytes, limit, false, true)
+          : unzstdSteps(bytes, limit, false, MAX_ZSTD_WINDOW, true)
+  const { bytes: inner, damaged } = options.pacing ? await runAsync(steps, options.pacing) : run(steps)
 
   if (isTar(inner)) {
     return parseTar(inner, options.encoding, `TAR + ${label}`, bytes.length, damaged)
@@ -132,6 +144,7 @@ function single(
     format: label,
     entries: [entry],
     archiveSize: bytes.length,
+    unpacked: inner.buffer.byteLength,
     legacyNames: false,
     encoding: options.encoding,
     damaged,

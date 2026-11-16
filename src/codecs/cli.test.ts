@@ -13,6 +13,7 @@ import { zstd, type ZstdOptions } from '../fixtures/zstd'
 import { bunzip2 } from './bzip2'
 import { DamagedError, UnsupportedDataError } from './sink'
 import { unxz } from './xz'
+import { indexedSize } from './xz/stream'
 import { unzstd } from './zstd'
 
 const DIR = decodeURIComponent(new URL('../../.test-files/cli/', import.meta.url).pathname)
@@ -47,7 +48,12 @@ test('files made by bzip2, zstd and xz unpack here (tools/cli-crosscheck.sh)', (
     const [packed, plain, expected] = line.split('\t')
     let outcome: string
     try {
-      outcome = equal(unpack(packed, readFileSync(DIR + packed)), readFileSync(DIR + plain)) ? 'ok' : 'wrong output'
+      const data = readFileSync(DIR + packed)
+      const bytes = unpack(packed, data)
+      outcome = equal(bytes, readFileSync(DIR + plain)) ? 'ok' : 'wrong output'
+      // Every file xz writes has an Index, so its size hint is exact.
+      const hint = packed.endsWith('.xz') ? indexedSize(data) : bytes.length
+      if (outcome === 'ok' && hint !== bytes.length) outcome = `index gives ${hint} bytes, not ${bytes.length}`
     } catch (error) {
       if (error instanceof UnsupportedDataError) outcome = `unsupported:${error.feature}`
       else if (error instanceof DamagedError) outcome = 'damaged'

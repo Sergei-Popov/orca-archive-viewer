@@ -1,6 +1,6 @@
 // What an entry's bytes are, for the preview: an image, text, a nested archive or other binary.
 
-import { isArchive } from './archive/open'
+import { isArchive, unsupportedFormat } from './archive/open'
 
 export const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png',
@@ -109,6 +109,8 @@ export function decodeText(bytes: Uint8Array, truncated: boolean, fallback: stri
 export type ContentKind =
   | { kind: 'image'; mime: string }
   | { kind: 'archive' }
+  /** An archive format the viewer does not open, such as a .7z inside a ZIP. */
+  | { kind: 'unsupported'; format: string }
   | { kind: 'text'; decoded: Decoded }
   | { kind: 'binary' }
 
@@ -116,6 +118,8 @@ export function classify(name: string, bytes: Uint8Array, truncated: boolean, fa
   const mime = imageType(name, bytes)
   if (mime && !truncated) return { kind: 'image', mime }
   if (isArchive(bytes)) return { kind: 'archive' }
+  const format = unsupportedFormat(bytes)
+  if (format) return { kind: 'unsupported', format }
   const decoded = decodeText(bytes, truncated, fallback)
   if (decoded) return { kind: 'text', decoded }
   return { kind: 'binary' }

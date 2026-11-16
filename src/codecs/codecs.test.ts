@@ -5,12 +5,14 @@ import { bzip2 } from '../fixtures/bzip2'
 import { base64, sha256Xz, x86Xz } from '../fixtures/samples'
 import { xz } from '../fixtures/xz'
 import { zstd } from '../fixtures/zstd'
-import { bunzip2 } from './bzip2'
+import { bunzip2, bunzip2Steps } from './bzip2'
 import { crc32 } from './crc32'
-import { gunzip, gzipHeader, inflate } from './deflate'
+import { gunzip, gunzipSteps, gzipHeader, inflate, singleMemberSize } from './deflate'
 import { DamagedError, Sink, TooLargeError, UnsupportedDataError } from './sink'
-import { unxz } from './xz'
-import { unzstd, zstdFrames } from './zstd'
+import { CancelledError, run, runAsync } from './steps'
+import { unxz, unxzSteps } from './xz'
+import { indexedSize } from './xz/stream'
+import { unzstd, unzstdSteps, zstdFrames } from './zstd'
 
 const is = (type: abstract new (...args: never[]) => unknown) => (error: unknown) => error instanceof type
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
@@ -51,18 +53,50 @@ test('crc32 continues from a previous value', () => {
   assert.equal(crc32(whole.subarray(4), crc32(whole.subarray(0, 4))), 0xcbf43926)
 })
 
-test('Sink grows one buffer up to its limit and returns a view of it', () => {
-  const sink = new Sink(1000)
-  sink.push(new Uint8Array(600).fill(1))
-  sink.push(new Uint8Array(300).fill(2))
+test('Sink keeps blocks, joins them once into an exact buffer and holds no more than the limit', () => {
+  const sink = new Sink(1 << 24)
+  let pushed = 0
+  for (let i = 0; i < 300; i++) {
+    sink.push(new Uint8Array(10007).fill(i & 0xff))
+    pushed += 10007
+  }
   const bytes = sink.result()
-  assert.equal(bytes.length, 900)
-  assert.equal(bytes.buffer.byteLength, 1000)
-  assert.equal(bytes[899], 2)
-  assert.throws(() => sink.push(new Uint8Array(200)), is(TooLargeError))
+  assert.deepEqual([bytes.length, bytes.buffer.byteLength], [pushed, pushed])
+  assert.deepEqual([bytes[0], bytes[10007 * 150], bytes[pushed - 1]], [0, 150, 299 & 0xff])
+  assert.equal(sink.result(), bytes)
+  // A refused stream throws before it holds more than the limit.
+  const capped = new Sink(1000)
+  capped.push(new Uint8Array(600).fill(1))
+  capped.push(new Uint8Array(300).fill(2))
+  assert.throws(() => capped.push(new Uint8Array(200)), is(TooLargeError))
+  assert.deepEqual([capped.result().length, capped.result()[899]], [900, 2])
+  // In truncate mode the first `limit` bytes are kept.
+  const cut = new Sink(1000, true)
+  cut.push(new Uint8Array(1500).fill(3))
+  assert.deepEqual([cut.full, cut.result().length, cut.result().buffer.byteLength], [true, 1000, 1000])
+  // A right hint gives one block and no copy; a hint far too large is cut down.
   const sized = new Sink(1 << 20, false, 10)
   sized.push(new Uint8Array(10))
   assert.equal(sized.result().buffer.byteLength, 10)
+  const lying = new Sink(1 << 26, false, 1 << 26)
+  lying.push(new Uint8Array(5000).fill(4))
+  assert.deepEqual([lying.result().length, lying.result().buffer.byteLength], [5000, 5000])
+})
+
+test('gunzip sizes its buffer from ISIZE only when ISIZE fits one member', () => {
+  const big = new Uint8Array(3 << 20).map((_, i) => (i * 7) & 0xff)
+  // One member: ISIZE is the whole size, so one block holds it.
+  const one = gunzip(gzipSync(big), 1 << 26)
+  assert.deepEqual([one.bytes.length, one.bytes.buffer.byteLength, one.damaged], [big.length, big.length, false])
+  assert.equal(singleMemberSize(gzipSync(big)), big.length)
+  // Two members: ISIZE is the last one's (10 bytes), which does not fit the data.
+  const two = concat(gzipSync(big), gzipSync(utf8('0123456789')))
+  assert.equal(singleMemberSize(two), 0)
+  const joined = gunzip(two, 1 << 26)
+  assert.deepEqual([joined.bytes.length, joined.bytes.buffer.byteLength], [big.length + 10, big.length + 10])
+  // 4 GiB of zeros and one more MiB: ISIZE wraps to 1 MiB, far below what 4 MB of DEFLATE holds.
+  const wrapped = concat(new Uint8Array([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3]), new Uint8Array(4 << 20), new Uint8Array([0, 0, 0, 0, 0, 0, 0x10, 0]))
+  assert.equal(singleMemberSize(wrapped), 0)
 })
 
 test('crc32 matches the check value', () => {
@@ -336,6 +370,94 @@ test('unzstd unpacks a frame of known size in place and checks it against its bl
   assert.equal(cut.truncated, true)
 })
 
+/** A zstd frame of `count` RLE blocks of 128 KiB, recording its content size in 8 bytes. */
+function rleFrame(count: number, value: number): Uint8Array {
+  const out = new Uint8Array(4 + 1 + 1 + 8 + count * 4)
+  out.set([0x28, 0xb5, 0x2f, 0xfd, 0xc0, (20 - 10) << 3])
+  let size = count * 131072
+  for (let i = 0; i < 8; i++, size = Math.floor(size / 256)) out[6 + i] = size % 256
+  for (let i = 0; i < count; i++) {
+    const header = (i === count - 1 ? 1 : 0) | (1 << 1) | (131072 << 3)
+    out.set([header & 0xff, (header >> 8) & 0xff, header >> 16, value], 14 + i * 4)
+  }
+  return out
+}
+
+/** A zstd frame with no content size and a 128 KiB window: `count` RLE blocks of 128 KiB. */
+function rleStream(count: number, value: number): Uint8Array {
+  const out = new Uint8Array(6 + count * 4)
+  out.set([0x28, 0xb5, 0x2f, 0xfd, 0, (17 - 10) << 3])
+  for (let i = 0; i < count; i++) {
+    const header = (i === count - 1 ? 1 : 0) | (1 << 1) | (131072 << 3)
+    out.set([header & 0xff, (header >> 8) & 0xff, header >> 16, value], 6 + i * 4)
+  }
+  return out
+}
+
+test('unzstd in truncate mode stops as soon as it has the bytes it was asked for', () => {
+  // 64 KiB of input that unpacks to 2 GiB: one slice used to be decoded to its end.
+  const bomb = rleStream(16384, 0x61)
+  assert.ok(bomb.length < 65536 + 16)
+  const started = Date.now()
+  for (let i = 0; i < 20; i++) {
+    const { bytes, truncated } = unzstd(bomb, 4096, true)
+    assert.deepEqual([bytes.length, truncated, bytes[4095]], [4096, true, 0x61])
+  }
+  assert.ok(Date.now() - started < 500, `20 reads took ${Date.now() - started} ms`)
+  assert.throws(() => unzstd(bomb, 4096), (e: unknown) => e instanceof TooLargeError)
+})
+
+test('unzstd unpacks a frame that records a content size over 256 MiB', () => {
+  // fzstd compared its output buffer with `== 1`, which joined it into a string: past 256 MiB
+  // that threw "Invalid string length" and the file was called damaged; below, it was slow.
+  const frame = rleFrame(2400, 0x61)
+  assert.equal(zstdFrames(frame)[0].size, 2400 * 131072)
+  const started = Date.now()
+  const { bytes } = unzstd(frame, 512 * 1024 * 1024)
+  assert.equal(bytes.length, 2400 * 131072)
+  assert.equal(bytes[0], 0x61)
+  assert.equal(bytes[bytes.length - 1], 0x61)
+  assert.equal(bytes[150 * 1024 * 1024], 0x61)
+  const medium = rleFrame(512, 0x62)
+  const time = Date.now()
+  assert.equal(unzstd(medium, 64 * 1024 * 1024).bytes.length, 64 * 1024 * 1024)
+  assert.ok(Date.now() - time < 1500, `64 MiB took ${Date.now() - time} ms`)
+  assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`)
+})
+
+test('with partial set, bunzip2, unxz and unzstd return what came before damage', () => {
+  const data = randomBytes(250000, 5)
+  // bzip2: the blocks that passed their CRC, not the damaged one.
+  const packed = bzip2(data, { level: 1 })
+  const flipped = packed.slice()
+  flipped[Math.floor(packed.length * 0.6)] ^= 0xff
+  assertDamaged(() => bunzip2(flipped, 1 << 20), 'a changed byte')
+  const kept = bunzip2(flipped, 1 << 20, false, true)
+  assert.equal(kept.damaged, true)
+  assert.ok(kept.bytes.length >= 90000 && kept.bytes.length < data.length, `${kept.bytes.length}`)
+  assert.deepEqual(kept.bytes, data.subarray(0, kept.bytes.length))
+  assert.equal(bunzip2(packed, 1 << 20, false, true).damaged, false)
+  // zstd: frames before junk, and the whole blocks of a cut frame.
+  const frame = zstd(data)
+  const junk = unzstd(concat(frame, utf8('junk after the frame')), 1 << 20, false, undefined, true)
+  assert.equal(junk.damaged, true)
+  assert.deepEqual(junk.bytes, data)
+  assertDamaged(() => unzstd(concat(frame, utf8('junk after the frame')), 1 << 20), 'junk')
+  const cut = unzstd(frame.subarray(0, frame.length - 1000), 1 << 20, false, undefined, true)
+  assert.equal(cut.damaged, true)
+  assert.deepEqual(cut.bytes, data.subarray(0, cut.bytes.length))
+  assert.ok(cut.bytes.length >= 131072, `${cut.bytes.length}`)
+  // xz: what was decoded before the cut.
+  const stream = xz(data)
+  const part = unxz(stream.subarray(0, Math.floor(stream.length / 2)), 1 << 20, false, true)
+  assert.equal(part.damaged, true)
+  assert.deepEqual(part.bytes, data.subarray(0, part.bytes.length))
+  assert.ok(part.bytes.length > 50000, `${part.bytes.length}`)
+  // Nothing before the damage still throws.
+  assertDamaged(() => unxz(stream.subarray(0, 30), 1 << 20, false, true), 'a header only')
+  assertDamaged(() => unzstd(frame.subarray(0, 6), 1 << 20, false, undefined, true), 'a header only')
+})
+
 test('inflate fills the declared size, or streams up to the limit', () => {
   const plain = utf8('abc'.repeat(10000))
   const packed = gzipSync(plain).subarray(10, -8)
@@ -407,4 +529,101 @@ test('gzipHeader reads FNAME and MTIME', () => {
   const header = gzipHeader(gzipSync(utf8('x'), { filename: 'notes.txt', mtime: 1700000000000 }))
   assert.equal(text(header.name ?? new Uint8Array(0)), 'notes.txt')
   assert.equal(header.mtime, 1700000000000)
+})
+
+test('unxz, bunzip2 and streamed unzstd keep only the bytes they unpacked', () => {
+  // 300 KB: XZ's buffer doubles to 512 KiB on the way, blocks reach 256 KiB.
+  const plain = new Uint8Array(300000).map((_, i) => (i * 31 + (i >> 9)) & 0xff)
+  for (const [label, bytes] of [
+    ['xz', unxz(xz(plain), 1 << 26).bytes],
+    ['bzip2', bunzip2(bzip2(plain), 1 << 26).bytes],
+    ['zstd', unzstd(zstd(plain, { windowLog: 17, contentSize: false }), 1 << 26).bytes]
+  ] as const) {
+    assert.deepEqual([bytes.length, bytes.buffer.byteLength], [plain.length, plain.length], label)
+    assert.deepEqual(bytes, plain, label)
+  }
+})
+
+test('the XZ Index gives the unpacked size of every Stream, or 0 when it does not fit', () => {
+  const a = new Uint8Array(200000).map((_, i) => (i * 13) & 0xff)
+  const b = utf8('second stream')
+  assert.equal(indexedSize(xz(a)), a.length)
+  assert.equal(indexedSize(xz(a, { blockSize: 30000 })), a.length)
+  // Concatenated Streams with Stream Padding between and after them.
+  const two = concat(xz(a), new Uint8Array(8), xz(b), new Uint8Array(4))
+  assert.equal(indexedSize(two), a.length + b.length)
+  assert.equal(indexedSize(xz(new Uint8Array(0))), 0)
+  // A cut file, padding that is not a multiple of four, and data that is not XZ.
+  const packed = xz(a)
+  assert.equal(indexedSize(packed.subarray(0, packed.length - 20)), 0)
+  assert.equal(indexedSize(concat(xz(a), new Uint8Array(3))), 0)
+  assert.equal(indexedSize(utf8('YZ'.repeat(40))), 0)
+  // Whatever the hint says, the decoder checks the Index again.
+  const out = unxz(two, 1 << 26)
+  assert.deepEqual([out.bytes.length, out.bytes.buffer.byteLength], [a.length + b.length, a.length + b.length])
+})
+
+test('decoders in steps give the thread back and stop when cancelled', async () => {
+  // 1 MiB from xorshift: it does not pack, so every decoder takes many steps.
+  const plain = new Uint8Array(1 << 20)
+  let x = 2463534242
+  for (let i = 0; i < plain.length; i++) {
+    x ^= x << 13
+    x ^= x >>> 17
+    x ^= x << 5
+    plain[i] = x & 0xff
+  }
+  const streams: [string, Uint8Array][] = [
+    ['gzip', gzipSync(plain)],
+    ['bzip2', bzip2(plain, { level: 1 })],
+    ['xz', xz(plain, { chunkSize: 65536 })],
+    ['zstd', zstd(plain, { windowLog: 17, contentSize: false })]
+  ]
+  for (const [label, packed] of streams) {
+    const steps = () =>
+      label === 'gzip'
+        ? gunzipSteps(packed, 1 << 26)
+        : label === 'bzip2'
+          ? bunzip2Steps(packed, 1 << 26)
+          : label === 'xz'
+            ? unxzSteps(packed, 1 << 26)
+            : unzstdSteps(packed, 1 << 26)
+    // Straight through, the steps give what the one-call decoders give.
+    assert.deepEqual(run(steps()).bytes, plain, label)
+    let count = 0
+    for (const _ of { [Symbol.iterator]: steps }) count++
+    // gzip and zstd step through 64 KiB of input at a time, bzip2 by 100 kB blocks, XZ by chunks.
+    assert.ok(count >= 8, `${label}: ${count} steps for ${packed.length} bytes`)
+    // Paced with no time between pauses, a task queued before it (as a new document's message
+    // would be) runs before it ends, and cancelling stops it at the next pause.
+    let delivered = false
+    const { port1, port2 } = new MessageChannel()
+    port1.onmessage = () => {
+      delivered = true
+      port1.close()
+    }
+    port2.postMessage(null)
+    const paced = await runAsync(steps(), { cancelled: () => false, every: 0 })
+    assert.deepEqual(paced.bytes, plain, label)
+    assert.ok(delivered, label)
+    let pauses = 0
+    await assert.rejects(runAsync(steps(), { cancelled: () => ++pauses >= 2, every: 0 }), (e: unknown) => e instanceof CancelledError)
+    assert.equal(pauses, 2, label)
+  }
+})
+
+test('a Zstandard frame streamed in steps is held to the size it records', () => {
+  const plain = new Uint8Array(5 << 20).map((_, i) => (i * 7) & 0xff)
+  const packed = zstd(plain, { windowLog: 17 })
+  const frames = zstdFrames(packed)
+  assert.equal(frames[0].size, plain.length)
+  assert.deepEqual(unzstd(packed, 1 << 26).bytes, plain)
+  assert.equal(unzstd(packed, 1 << 26).bytes.buffer.byteLength, plain.length)
+  // The same frame recording one byte less (Frame_Content_Size is the last header field here).
+  const lying = packed.slice()
+  const header = 4 + 1 + 1
+  const size = new DataView(lying.buffer).getUint32(header, true)
+  assert.equal(size, plain.length)
+  new DataView(lying.buffer).setUint32(header, plain.length - 1, true)
+  assert.throws(() => unzstd(lying, 1 << 26), (e: unknown) => e instanceof DamagedError)
 })

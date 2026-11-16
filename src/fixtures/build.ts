@@ -61,6 +61,9 @@ export type ZipItem = {
   crc?: number
   /** Store this uncompressed size instead of the real one. */
   size?: number
+  /** Leave CRC and sizes out of the local header and write a data descriptor after the data,
+   *  with or without its optional signature. */
+  descriptor?: 'signed' | 'bare'
 }
 
 export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: string; zip64End?: boolean } = {}): Uint8Array {
@@ -78,19 +81,26 @@ export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: 
     const size = item.size ?? data.length
     const offset = w.length - base
     const extra = item.extra ?? new Uint8Array(0)
+    const flags = (item.flags ?? 0) | (item.descriptor ? 8 : 0)
     w.u32(0x04034b50)
     w.u16(20)
-    w.u16(item.flags ?? 0)
+    w.u16(flags)
     w.u16(method)
     w.u16(item.time ?? 0)
     w.u16(item.date ?? 0x5b21)
-    w.u32(crc)
-    w.u32(packed.length)
-    w.u32(size)
+    w.u32(item.descriptor ? 0 : crc)
+    w.u32(item.descriptor ? 0 : packed.length)
+    w.u32(item.descriptor ? 0 : size)
     w.u16(name.length)
     w.u16(0)
     w.raw(name)
     w.raw(packed)
+    if (item.descriptor) {
+      if (item.descriptor === 'signed') w.u32(0x08074b50)
+      w.u32(crc)
+      w.u32(packed.length)
+      w.u32(size)
+    }
 
     const c = new Writer()
     let zip64Extra = new Uint8Array(0)
@@ -106,7 +116,7 @@ export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: 
     c.u32(0x02014b50)
     c.u16(((item.host ?? 3) << 8) | 20)
     c.u16(20)
-    c.u16(item.flags ?? 0)
+    c.u16(flags)
     c.u16(method)
     c.u16(item.time ?? 0)
     c.u16(item.date ?? 0x5b21)
@@ -164,7 +174,8 @@ export type TarItem = {
   type?: string
   link?: string
   mode?: number
-  mtime?: number
+  /** Seconds; null leaves the field empty. Negative or over 11 octal digits: base-256. */
+  mtime?: number | null
   prefix?: string
   /** Write the size in base-256. */
   base256?: boolean
@@ -172,10 +183,29 @@ export type TarItem = {
   v7?: boolean
   /** Corrupt the checksum. */
   badChecksum?: boolean
+  /** Old GNU magic "ustar  \0", which has no prefix field. */
+  gnu?: boolean
+  /** Raw bytes to place in the header before the checksum: [offset, bytes]. */
+  fields?: [number, Uint8Array][]
+  /** Blocks between the header and the data (old GNU sparse extension blocks). */
+  extension?: Uint8Array
 }
 
 function octal(value: number, length: number): Uint8Array {
   return utf8(value.toString(8).padStart(length - 1, '0') + '\0')
+}
+
+/** GNU base-256: 0x80 then the value, or two's complement with a 0xff lead when negative. */
+export function base256(value: number, length: number): Uint8Array {
+  const out = new Uint8Array(length)
+  let v = value < 0 ? -value - 1 : value
+  for (let i = length - 1; i > 0; i--) {
+    out[i] = v % 256
+    v = Math.floor(v / 256)
+  }
+  if (value < 0) for (let i = 1; i < length; i++) out[i] = ~out[i] & 0xff
+  out[0] = value < 0 ? 0xff : 0x80
+  return out
 }
 
 export function tarHeader(item: TarItem, size: number): Uint8Array {
@@ -185,25 +215,20 @@ export function tarHeader(item: TarItem, size: number): Uint8Array {
   h.set(octal(item.mode ?? 0o644, 8), 100)
   h.set(octal(0, 8), 108)
   h.set(octal(0, 8), 116)
-  if (item.base256) {
-    h[124] = 0x80
-    let v = size
-    for (let i = 135; i > 124; i--) {
-      h[i] = v % 256
-      v = Math.floor(v / 256)
-    }
-  } else {
-    h.set(octal(size, 12), 124)
-  }
-  h.set(octal(item.mtime ?? 1700000000, 12), 136)
+  h.set(item.base256 ? base256(size, 12) : octal(size, 12), 124)
+  const mtime = item.mtime === undefined ? 1700000000 : item.mtime
+  if (mtime !== null) h.set(mtime < 0 || mtime >= 8 ** 11 ? base256(mtime, 12) : octal(mtime, 12), 136)
   h.set(utf8('        '), 148)
   h[156] = (item.type ?? '0').charCodeAt(0)
   if (item.link) h.set(utf8(item.link), 157)
-  if (!item.v7) {
+  if (item.gnu) {
+    h.set(utf8('ustar  \0'), 257)
+  } else if (!item.v7) {
     h.set(utf8('ustar\0'), 257)
     h.set(utf8('00'), 263)
     if (item.prefix) h.set(utf8(item.prefix), 345)
   }
+  for (const [at, bytes] of item.fields ?? []) h.set(bytes, at)
   let sum = 0
   for (const b of h) sum += b
   if (item.badChecksum) sum += 1
@@ -216,6 +241,7 @@ export function tar(items: TarItem[], options: { end?: boolean } = {}): Uint8Arr
   for (const item of items) {
     const data = item.data ?? new Uint8Array(0)
     parts.push(tarHeader(item, data.length))
+    if (item.extension) parts.push(item.extension)
     parts.push(data)
     parts.push(new Uint8Array((512 - (data.length % 512)) % 512))
   }
@@ -223,14 +249,39 @@ export function tar(items: TarItem[], options: { end?: boolean } = {}): Uint8Arr
   return concat(...parts)
 }
 
-/** A PAX extended header item carrying `records`. */
-export function pax(records: Record<string, string>): TarItem {
+/** A PAX extended header item carrying `records`; pairs keep their order and repeated keys. */
+export function pax(records: Record<string, string> | [string, string][], type = 'x'): TarItem {
   let body = ''
-  for (const [key, value] of Object.entries(records)) {
+  for (const [key, value] of Array.isArray(records) ? records : Object.entries(records)) {
     const text = ` ${key}=${value}\n`
     let length = text.length + 1
     while (String(length).length + utf8(text).length !== length) length = String(length).length + utf8(text).length
     body += `${length}${text}`
   }
-  return { name: 'PaxHeader', type: 'x', data: utf8(body) }
+  return { name: 'PaxHeader', type, data: utf8(body) }
+}
+
+/**
+ * A sparse file as GNU tar's old `S` header: `runs` are [offset, data] in file order; the header
+ * holds four, and each extension block 21 more.
+ */
+export function gnuSparse(name: string, runs: [number, Uint8Array][], realSize: number): TarItem {
+  const slot = ([offset, data]: [number, Uint8Array]) => concat(octal(offset, 12), octal(data.length, 12))
+  const fields: [number, Uint8Array][] = runs.slice(0, 4).map((run, i) => [386 + i * 24, slot(run)])
+  fields.push([483, octal(realSize, 12)])
+  const blocks: Uint8Array[] = []
+  for (let i = 4; i < runs.length; i += 21) {
+    const block = new Uint8Array(512)
+    runs.slice(i, i + 21).forEach((run, j) => block.set(slot(run), j * 24))
+    if (i + 21 < runs.length) block[504] = 1
+    blocks.push(block)
+  }
+  if (blocks.length) fields.push([482, new Uint8Array([1])])
+  return { name, type: 'S', gnu: true, fields, extension: concat(...blocks), data: concat(...runs.map(([, data]) => data)) }
+}
+
+/** The 1.0 sparse map GNU tar and bsdtar put before the data, padded to whole blocks. */
+export function sparseMap(runs: [number, number][]): Uint8Array {
+  const text = utf8(`${runs.length}\n` + runs.map(([offset, length]) => `${offset}\n${length}\n`).join(''))
+  return concat(text, new Uint8Array((512 - (text.length % 512)) % 512))
 }
