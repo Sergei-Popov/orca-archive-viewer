@@ -85,9 +85,9 @@ test('parsePax reads length-prefixed records in order, up to a NUL', () => {
   })
 })
 
-test('parsePax stops at a length with a leading zero, too many digits or too small, and marks damage', () => {
+test('parsePax stops at a length with too many digits or too small, and marks damage', () => {
   const good = '11 size=42\n'
-  for (const bad of ['011 size=42\n', '0'.repeat(30) + '11 size=42\n', '3 k=v\n', '4 k=\n', ' 11 size=42\n', '11 size=42 ', '11 size 42\n', '11size=42\n\n', '99 k=v\n']) {
+  for (const bad of ['0011 size=42\n', '0'.repeat(30) + '11 size=42\n', '3 k=v\n', '4 k=\n', ' 11 size=42\n', '11 size=42 ', '11 size 42\n', '11size=42\n\n', '99 k=v\n']) {
     assert.deepEqual(parsePax(utf8(good + bad + good)), { records: [['size', '42']], damaged: true }, JSON.stringify(bad))
   }
   assert.deepEqual(parsePax(utf8('1'.repeat(21) + ' k=v\n')), { records: [], damaged: true })
@@ -104,6 +104,13 @@ test('parsePax stops at a length with a leading zero, too many digits or too sma
   const global = parseTar(tar([{ name: 'g', type: 'g', data: utf8('0'.repeat(1 << 20) + '1 x') }, { name: 'b.txt' }]), 'cp437')
   assert.equal(global.damaged, true)
   assert.deepEqual(global.entries.map((e) => e.path), ['b.txt'])
+})
+
+test('a PAX length with leading zeros is valid, as tarfile and bsdtar read it', () => {
+  assert.deepEqual(parsePax(utf8('017 path=renamed\n012 size=42\n')), { records: [['path', 'renamed'], ['size', '42']], damaged: false })
+  const archive = parseTar(tar([{ name: 'PaxHeader', type: 'x', data: utf8('017 path=renamed\n') }, { name: 'a.txt', data: utf8('x') }]), 'cp437')
+  assert.deepEqual(archive.entries.map((e) => e.path), ['renamed'])
+  assert.equal(archive.damaged, false)
 })
 
 test('a PAX record named __proto__ is a record, not a prototype', () => {
@@ -193,13 +200,6 @@ test('an mtime of 0 is 1970-01-01; only an empty field means no date', () => {
   assert.deepEqual(archive.entries.map((e) => [e.path, e.mtime]), [['zero.txt', 0], ['none.txt', undefined], ['pax-zero.txt', 0]])
 })
 
-test('a hard link reads the last entry at its target path before the link, on each hop', () => {
-  const archive = parseTar(
-    tar([
-      { name: 'f.txt', data: utf8('v1\n') },
-      { name: 'h', type: '1', link: 'f.txt' },
-      { name: 'f.txt', data: utf8('version two\n') },
-      { name: 'h2', type: '1', link: 'h' },
 test('a PAX mtime that cannot be used leaves no date instead of the header field', () => {
   // As tarfile and GNU tar write them: the time in a PAX record, zeros in the header field.
   const entry = (mtime: string, name: string) => [pax({ mtime }), { name, data: utf8('.'), mtime: 0 }]
@@ -227,6 +227,13 @@ test('a PAX mtime that cannot be used leaves no date instead of the header field
   assert.equal(archive.damaged, false)
 })
 
+test('a hard link reads the last entry at its target path before the link, on each hop', () => {
+  const archive = parseTar(
+    tar([
+      { name: 'f.txt', data: utf8('v1\n') },
+      { name: 'h', type: '1', link: 'f.txt' },
+      { name: 'f.txt', data: utf8('version two\n') },
+      { name: 'h2', type: '1', link: 'h' },
       { name: 'h', type: '1', link: 'f.txt' },
       { name: 'h3', type: '1', link: 'h' },
       { name: 'ahead', type: '1', link: 'later.txt' },

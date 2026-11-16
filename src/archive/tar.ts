@@ -200,9 +200,10 @@ export function parsePax(data: Uint8Array): PaxRecords {
     while (p < data.length && p - at < 21 && data[p] >= 0x30 && data[p] <= 0x39) length = length * 10 + data[p++] - 0x30
     const digits = p - at
     const end = at + length
-    // The shortest record is "<digits> k=\n".
-    const framed =
-      digits > 0 && digits <= 20 && data[at] !== 0x30 && data[p] === 0x20 && length >= digits + 4 && end <= data.length
+    // The shortest record is "<digits> k=\n". At most 20 digits and that minimum length keep the
+    // scan linear: each record moves on by at least 5 bytes. Leading zeros are allowed, as tarfile
+    // and bsdtar allow them ("017 path=renamed\n").
+    const framed = digits > 0 && digits <= 20 && data[p] === 0x20 && length >= digits + 4 && end <= data.length
     if (!framed || data[end - 1] !== 0x0a) return { records, damaged: true }
     const record = data.subarray(p + 1, end - 1)
     const eq = record.indexOf(0x3d)
