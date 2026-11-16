@@ -270,6 +270,28 @@ test('a ZIP cut inside its central directory uses the records it has, and one cu
   assert.throws(() => cut.read(cut.entries[0], 1 << 20), (e: unknown) => e instanceof EntryError && e.code === 'damaged')
 })
 
+test('a ZIP cut inside a central record keeps the name, kind and date from its local header', () => {
+  const ut = (seconds: number) => Uint8Array.from([0x55, 0x54, 5, 0, 1, seconds & 0xff, (seconds >>> 8) & 0xff, (seconds >>> 16) & 0xff, seconds >>> 24])
+  const whole = zip([
+    { name: 'dir/some-longer-file-name-00.txt', data: utf8('x'.repeat(500)), method: 8, extra: ut(1700000000) },
+    { name: 'link-a', data: utf8('dir/some-longer-file-name-00.txt'), external: (0o120777 << 16) >>> 0, extra: ut(1700000100) },
+    { name: 'proj/zz-link-target', data: utf8('zz'), extra: ut(1700000200) }
+  ])
+  const full = parseZip(whole, 'cp437').entries
+  const local = dosTime(0x5b21, 0)
+  let cd = 0
+  while (!(whole[cd] === 0x50 && whole[cd + 1] === 0x4b && whole[cd + 2] === 1 && whole[cd + 3] === 2)) cd++
+  for (let cut = cd; cut < whole.length; cut++) {
+    const archive = parseZip(whole.subarray(0, cut), 'cp437')
+    const at = `cut at ${cut} of ${whole.length}`
+    assert.equal(archive.damaged, true, at)
+    assert.deepEqual(archive.entries.map((e) => [e.path, e.dir, e.size]), full.map((e) => [e.path, e.dir, e.size]), at)
+    // Each date is the central record's, or the local header's when its central record is cut.
+    archive.entries.forEach((e, i) => assert.ok(e.mtime === full[i].mtime || e.mtime === local, `${at}: ${e.path} ${e.mtime}`))
+    assert.equal(text(archive.read(archive.entries[0], 1000).bytes), 'x'.repeat(500), at)
+  }
+})
+
 test('ZIP link targets are read when shown, not while the archive opens', () => {
   // 64 KiB of zstd that unpacks to 2 GiB, as the data of 100 links recorded at 5 bytes.
   const frame = new Uint8Array(6 + 16384 * 4)
