@@ -26,6 +26,8 @@ All notable changes to this plugin are documented here. The format follows
 - A PAX header with a malformed length field (a leading zero, over 20 digits, too short for its
   record) marks the archive damaged and stops there, instead of rescanning the field: a 288-byte
   crafted `.tar.gz` used to freeze the tab for 20 seconds.
+- A TAR hard link reads the file it was made from, the last entry at its target path before the
+  link, as tar does, instead of a later file with the same path in an appended archive.
 
 ## [0.1.0] - 2026-11-14
 

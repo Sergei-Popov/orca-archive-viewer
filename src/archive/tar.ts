@@ -232,8 +232,25 @@ function build(
     }
     return entry
   })
-  const byPath = new Map<string, Entry>()
-  for (const entry of entries) byPath.set(entry.path, entry)
+  // The entries at each path, in archive order: an appended tar can hold a path more than once.
+  const byPath = new Map<string, number[]>()
+  for (const entry of entries) {
+    const list = byPath.get(entry.path)
+    if (list) list.push(entry.index)
+    else byPath.set(entry.path, [entry.index])
+  }
+  /** The last entry at `path` before `index`: the file a hard link at `index` was made from. */
+  const before = (path: string, index: number): Entry | undefined => {
+    const list = byPath.get(path) ?? []
+    let lo = 0
+    let hi = list.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (list[mid] < index) lo = mid + 1
+      else hi = mid
+    }
+    return lo > 0 ? entries[list[lo - 1]] : undefined
+  }
 
   return {
     kind: 'tar',
@@ -245,9 +262,10 @@ function build(
     damaged,
     read(entry, limit) {
       let target = entry
-      // A hard link stores no data: read the file it links to.
+      // A hard link stores no data: read the file it links to, as tar and Python's tarfile do:
+      // the last entry at that path before the link, on each hop.
       for (let hops = 0; target.link?.hard && hops < 8; hops++) {
-        const linked = byPath.get(normalizePath(target.link.target, false))
+        const linked = before(normalizePath(target.link.target, false), target.index)
         if (!linked) throw new EntryError('missing', target.link.target)
         target = linked
       }

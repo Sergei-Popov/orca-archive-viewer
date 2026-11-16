@@ -192,3 +192,26 @@ test('an mtime of 0 is 1970-01-01; only an empty field means no date', () => {
   )
   assert.deepEqual(archive.entries.map((e) => [e.path, e.mtime]), [['zero.txt', 0], ['none.txt', undefined], ['pax-zero.txt', 0]])
 })
+
+test('a hard link reads the last entry at its target path before the link, on each hop', () => {
+  const archive = parseTar(
+    tar([
+      { name: 'f.txt', data: utf8('v1\n') },
+      { name: 'h', type: '1', link: 'f.txt' },
+      { name: 'f.txt', data: utf8('version two\n') },
+      { name: 'h2', type: '1', link: 'h' },
+      { name: 'h', type: '1', link: 'f.txt' },
+      { name: 'h3', type: '1', link: 'h' },
+      { name: 'ahead', type: '1', link: 'later.txt' },
+      { name: 'later.txt', data: utf8('later') }
+    ]),
+    'cp437'
+  )
+  const read = (index: number) => text(archive.read(archive.entries[index], 100).bytes)
+  assert.equal(read(1), 'v1\n')
+  assert.equal(read(2), 'version two\n')
+  assert.equal(read(3), 'v1\n') // h2 → the first h → the first f.txt
+  assert.equal(read(5), 'version two\n') // h3 → the second h → the second f.txt
+  // tar and Python's tarfile cannot link to a file that only comes later either.
+  assert.throws(() => archive.read(archive.entries[6], 100), (e: unknown) => e instanceof EntryError && e.code === 'missing')
+})
