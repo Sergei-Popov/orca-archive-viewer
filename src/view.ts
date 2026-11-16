@@ -7,7 +7,7 @@ import { LEGACY_ENCODINGS, type LegacyEncoding } from './archive/names'
 import { NotArchiveError, UnsupportedFormatError, isArchive, openArchive } from './archive/open'
 import { DamagedError, TooLargeError, UnsupportedDataError, type UnsupportedFeature } from './codecs/sink'
 import { type ContentKind, IMAGE_TYPES, classify, extension, hexDump, imageType, nameKind } from './content'
-import { formatBytes, formatCrc, formatDate, formatMode, formatRatio, formatShortDate, formatSize } from './display'
+import { formatBytes, formatCrc, formatDate, formatMode, formatRatio, formatShortDate, formatSize, saveName, visibleText } from './display'
 import { append, h, highlight, svg } from './dom'
 import { pointerFocus } from './focus'
 import { type Strings, fill } from './i18n'
@@ -344,8 +344,8 @@ export class ArchiveView {
       const current = index === this.levels.length - 1
       const crumb = h(
         'button',
-        { className: 'av-crumb', type: 'button', title: item.label, 'aria-current': current ? 'true' : undefined },
-        item.label
+        { className: 'av-crumb', type: 'button', title: visibleText(item.label), 'aria-current': current ? 'true' : undefined },
+        visibleText(item.label)
       )
       if (!current) crumb.addEventListener('click', () => this.goTo(index))
       this.crumbs.append(crumb)
@@ -463,7 +463,7 @@ export class ArchiveView {
     const open = this.isOpen(node, level)
     const [kind, kindClass] = this.kindIcon(node)
     const name = h('span', { className: 'av-name' }, highlight(node.name, level.filter))
-    if (node.entry?.link) append(name, h('span', { className: 'av-target' }, `→ ${node.entry.link.target}`))
+    if (node.entry?.link) append(name, h('span', { className: 'av-target' }, `→ ${visibleText(node.entry.link.target)}`))
     if (node.duplicate) {
       const { copy, copies } = node.duplicate
       append(name, h('span', { className: 'av-dup' }, fill(this.t.duplicate, { n: String(copy), count: String(copies) })))
@@ -478,7 +478,7 @@ export class ArchiveView {
         'aria-selected': node.path === level.selected ? 'true' : 'false',
         'aria-expanded': node.dir ? String(open) : undefined,
         'data-index': index,
-        title: shownPath(node)
+        title: visibleText(shownPath(node))
       },
       h('span', { className: 'av-twisty', 'data-open': String(open) }, node.dir && node.children.length ? svg(icon('chevron')) : null),
       h('span', { className: `av-kind ${kindClass}` }, svg(icon(kind))),
@@ -777,7 +777,7 @@ export class ArchiveView {
       if (this.saves(archive, root)) add(t.ratio, formatRatio(archive.archiveSize, root.size, this.locale))
     }
     if (archive.legacyNames) add(t.encoding, t[archive.encoding])
-    const title = this.levels.length > 1 ? level.label : fill(t.archiveOf, { format: archive.format })
+    const title = this.levels.length > 1 ? visibleText(level.label) : fill(t.archiveOf, { format: archive.format })
     return h(
       'div',
       { className: 'av-body' },
@@ -797,8 +797,8 @@ export class ArchiveView {
     return h(
       'header',
       { className: 'av-head' },
-      h('div', { className: 'av-title' }, svg(icon(iconName, iconClass)), h('h2', { title: node.name }, node.name)),
-      shownPath(node).includes('/') ? h('div', { className: 'av-path' }, shownPath(node)) : null,
+      h('div', { className: 'av-title' }, svg(icon(iconName, iconClass)), h('h2', { title: visibleText(node.name) }, visibleText(node.name))),
+      shownPath(node).includes('/') ? h('div', { className: 'av-path' }, visibleText(shownPath(node))) : null,
       list,
       actions
     )
@@ -852,7 +852,7 @@ export class ArchiveView {
     add(t.modified, formatDate(entry.mtime, this.locale))
     if (entry.mode !== undefined) add(t.mode, this.mode(entry.mode), { mono: true })
     if (entry.crc !== undefined && level.archive.kind === 'zip') add(t.crc, formatCrc(entry.crc), { mono: true })
-    if (entry.link) add(entry.link.hard ? t.hardLink : t.link, entry.link.target, { mono: true })
+    if (entry.link) add(entry.link.hard ? t.hardLink : t.link, visibleText(entry.link.target), { mono: true })
     if (node.duplicate) {
       const { copy, copies } = node.duplicate
       add(t.duplicateLabel, fill(t.duplicateHint, { n: String(copy), count: String(copies) }))
@@ -872,7 +872,7 @@ export class ArchiveView {
     const body = h('div', { className: 'av-body' })
     this.body = body
     if (symlink) {
-      body.append(this.callout('link', '', `${t.link} ${entry.link?.target ?? ''}`))
+      body.append(this.callout('link', '', `${t.link} ${visibleText(entry.link?.target ?? '')}`))
     } else if (entry.encrypted) {
       body.append(this.callout('lock', 'av-warn', t.encrypted))
     } else {
@@ -1102,7 +1102,8 @@ export class ArchiveView {
       return
     }
     // A copy: the entry can be a view into the whole archive.
-    saveAs({ suggestedName: node.name, mimeType: IMAGE_TYPES[extension(node.name)], data: result.bytes.slice() }).then(
+    // Without hidden characters, so the name the dialog offers is the one it looks like.
+    saveAs({ suggestedName: saveName(node.name, 'file'), mimeType: IMAGE_TYPES[extension(node.name)], data: result.bytes.slice() }).then(
       (outcome) => {
         if (outcome.status === 'saved') this.showToast(this.t.saved)
       },

@@ -1,6 +1,8 @@
 // A tiny element builder: text goes in as text nodes, never as HTML, because file names come
 // from the archive. Only the static icon strings in icons.ts are inserted as markup.
 
+import { highlightParts, visibleText } from './display'
+
 type Child = Node | string | null | undefined | false
 
 export function h<K extends keyof HTMLElementTagNameMap>(
@@ -34,23 +36,19 @@ export function svg(markup: string): Element {
   return el
 }
 
-/** `text` with every case-insensitive occurrence of `needle` wrapped in <mark>. */
+/** A name with every case-insensitive occurrence of `needle` wrapped in <mark>, its hidden
+ *  characters written out (see visibleText). */
 export function highlight(text: string, needle: string): DocumentFragment {
   const fragment = document.createDocumentFragment()
-  const query = needle.trim().toLowerCase()
-  if (!query) {
-    fragment.append(text)
-    return fragment
-  }
-  const lower = text.toLowerCase()
-  let at = 0
-  for (let i = lower.indexOf(query); i >= 0; i = lower.indexOf(query, at)) {
-    if (i > at) fragment.append(text.slice(at, i))
+  for (const part of highlightParts(text, needle)) {
+    const shown = visibleText(part.text)
+    if (!part.mark) {
+      fragment.append(shown)
+      continue
+    }
     const mark = document.createElement('mark')
-    mark.textContent = text.slice(i, i + query.length)
+    mark.textContent = shown
     fragment.append(mark)
-    at = i + query.length
   }
-  if (at < text.length) fragment.append(text.slice(at))
   return fragment
 }

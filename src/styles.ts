@@ -161,6 +161,9 @@ button, select, input { font: inherit; color: inherit; }
 .av-title .av-arch { color: var(--archive); }
 .av-title .av-pic { color: var(--picture); }
 .av-title .av-lock { color: var(--warn); }
+/* Names from the archive are isolated, so right-to-left text in one cannot reorder what is
+   around it. */
+.av-name, .av-target, .av-crumb, .av-title h2, .av-path, .av-overview h2, .av-comment { unicode-bidi: isolate; }
 .av-name { overflow: hidden; text-overflow: ellipsis; }
 .av-name mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inherit; border-radius: 2px; }
 .av-target { color: var(--muted-fg); margin-left: 6px; }

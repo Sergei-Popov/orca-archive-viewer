@@ -39,6 +39,12 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- Names, titles, paths, link targets and breadcrumbs write out invisible characters as
+  ⟨U+202E⟩ (format characters such as bidi controls, control characters, line separators), so a
+  name like `photo` U+202E `gpj.exe` no longer reads "photoexe.jpg"; names are bidi-isolated, and
+  Save… suggests the name without those characters.
+- The filter highlight marks the right characters after a letter whose lowercase is longer,
+  such as Turkish İ ("İstanbul notları" with "notlar").
 - A name a ZIP lists more than once shows every copy as its own row, marked "copy 1 of 2"
   and so on, instead of only the last: ZIP readers differ on which copy they use. An appended
   tar still shows the last copy, as tar extracts it.
