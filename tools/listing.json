@@ -12,15 +12,16 @@
       "file": ".orca/listing/samples/aurora-web-3.2.0.zip",
       "theme": "dark",
       "scale": 2,
-      "width": 640,
-      "height": 526,
+      "width": 440,
+      "height": 498,
       "waitFor": { "text": "README.md" },
       "act": [
         { "clickText": "public", "offset": [-36, 0] },
         { "clickText": "images", "offset": [-36, 0] },
+        { "clickText": "images" },
+        { "key": "ArrowDown" },
         { "clickText": "hero.png" },
-        { "wheel": [300, 150, -1000] },
-        { "hover": [620, 500] }
+        { "hover": [430, 480] }
       ],
       "origin": { "x": 0, "y": 0 }
     }
