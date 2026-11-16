@@ -39,6 +39,8 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- The README gave Orca's limit for opening a file in a plugin editor as 64 MB; Orca 1.4.258
+  opens files of at most 50 MB there. Save… still goes up to 64 MB.
 - The ZIP method "Stored" is translated (Russian "Без сжатия").
 - A 7-Zip, RAR, lzip, `.Z` or `.cab` file inside an archive shows "… archives are not
   supported" above its hex dump, as the README promised, instead of only the hex dump.

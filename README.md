@@ -32,14 +32,16 @@ Archive Viewer has:
 It is read-only and offline: no capabilities, no network, the file is never modified.
 
 **Not supported.** 7-Zip, RAR, lzip, `.Z` and `.cab` archives inside an archive, or opened
-under another archive's extension, show a message saying so above their first bytes; Orca
-itself opens files with those extensions, so they do not reach Archive Viewer.
+under another archive's extension, show a message saying so above their first bytes. Files
+named `.7z`, `.rar`, `.lz`, `.Z` or `.cab` stay with Orca's own view and do not open in
+Archive Viewer.
 Encrypted ZIP entries and other ZIP methods (LZMA, PPMd, Deflate64…) are listed but not
 unpacked.
 
 **Limits.** Each of these shows a message instead of the archive or the file:
 
-- Orca sends at most 64 MB to a plugin editor and shows its own notice for larger files.
+- Orca 1.4.258 opens files of at most 50 MB in a plugin editor and shows its own notice for
+  larger ones. (Saving one file out of an archive goes up to 64 MB.)
 - A compressed stream or an inner archive may unpack to at most 512 MB, and all open levels
   of archives inside archives to 1 GB together, at most 8 levels deep.
 - Zstandard: windows up to 128 MB (`zstd --ultra -22` and `--long=27` fit; `--long=28` and
