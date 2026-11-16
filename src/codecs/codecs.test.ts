@@ -13,6 +13,7 @@ import { CancelledError, run, runAsync } from './steps'
 import { unxz, unxzSteps } from './xz'
 import { indexedSize } from './xz/stream'
 import { unzstd, unzstdSteps, zstdFrames } from './zstd'
+import { crc64 } from './xz/crc64'
 
 const is = (type: abstract new (...args: never[]) => unknown) => (error: unknown) => error instanceof type
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
@@ -626,4 +627,37 @@ test('a Zstandard frame streamed in steps is held to the size it records', () =>
   assert.equal(size, plain.length)
   new DataView(lying.buffer).setUint32(header, plain.length - 1, true)
   assert.throws(() => unzstd(lying, 1 << 26), (e: unknown) => e instanceof DamagedError)
+})
+
+test('crc64 eight bytes at a time matches the check value and a byte-at-a-time CRC', () => {
+  // CRC-64/XZ of "123456789".
+  const [lo, hi] = crc64(new TextEncoder().encode('123456789'))
+  assert.equal(hi.toString(16) + lo.toString(16).padStart(8, '0'), '995dc9bbdf1939fa')
+  // The reflected polynomial 0xC96C5795D7870F42, one bit at a time.
+  const slow = (bytes: Uint8Array): [number, number] => {
+    let a = 0xffffffff
+    let b = 0xffffffff
+    for (const byte of bytes) {
+      a = (a ^ byte) >>> 0
+      for (let k = 0; k < 8; k++) {
+        const odd = a & 1
+        a = ((a >>> 1) | (b << 31)) >>> 0
+        b >>>= 1
+        if (odd) {
+          a = (a ^ 0xd7870f42) >>> 0
+          b = (b ^ 0xc96c5795) >>> 0
+        }
+      }
+    }
+    return [~a >>> 0, ~b >>> 0]
+  }
+  const data = new Uint8Array(300)
+  for (let i = 0; i < data.length; i++) data[i] = (i * 167 + 13) & 0xff
+  for (let offset = 0; offset < 8; offset++) {
+    for (let length = 0; length <= 40; length++) {
+      const view = data.subarray(offset, offset + length)
+      assert.deepEqual(crc64(view), slow(view), `offset ${offset}, length ${length}`)
+    }
+  }
+  assert.deepEqual(crc64(data), slow(data))
 })

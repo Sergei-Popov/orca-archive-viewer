@@ -80,7 +80,9 @@ holds the upstream licence text (XZ Embedded's `COPYING`).
 Each file's header says what changed from the C code. In short: the whole input is in memory, so
 there is no multi-call state machine; the LZMA2 filter only, with CRC-32, CRC-64 or no check and
 dictionaries up to 64 MiB; the Index is compared with the Blocks record by record; the first byte
-of each LZMA chunk must be zero; and the decoders yield between LZMA2 chunks (`src/codecs/steps.ts`).
+of each LZMA chunk must be zero; the range decoder and the LZMA symbol decoders are written out
+in one loop, with their state in locals, for speed; CRC-64 goes eight bytes at a time; and the
+decoders yield between LZMA2 chunks (`src/codecs/steps.ts`).
 Version 0.1.0 shipped XZ Embedded as WebAssembly instead; that file is gone.
 
 To compare with upstream, read the port beside the C files of that commit:

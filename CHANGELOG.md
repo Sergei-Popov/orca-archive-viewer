@@ -14,8 +14,8 @@ All notable changes to this plugin are documented here. The format follows
   `tools/listing.json`); a full-bleed plugin and tab icon; the description fits orca.dev's
   300 characters.
 - XZ is decoded by a TypeScript port of XZ Embedded (0BSD) instead of its WebAssembly build, so
-  the plugin carries no WebAssembly. The same files open, with the same limits; damage that the
-  WebAssembly build let through is now reported, as `xz -d` reports it.
+  the plugin carries no WebAssembly. The same files open, with the same limits and about as
+  fast; damage that the WebAssembly build let through is now reported, as `xz -d` reports it.
 - Unpacking a compressed archive gives the tab's thread back every 40 ms, so the tab keeps
   painting and a newer version of the file, or leaving a nested archive, stops the work
   instead of waiting for it. Large `.bz2` and `.xz` files still take several seconds to open
