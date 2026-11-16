@@ -25,6 +25,8 @@ export const css = String.raw`
   --archive: #7c5cc4;
   --picture: #2f8f62;
   --warn: #b7791f;
+  /* Small warning text: --warn itself is 3.6:1 on white; this is 7.6:1, and 5.2:1 on a selected row. */
+  --warn-text: color-mix(in srgb, var(--warn) 60%, var(--fg));
   --check-a: #ffffff;
   --check-b: #ececec;
   --ui-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -52,6 +54,7 @@ export const css = String.raw`
   --archive: #a68cf0;
   --picture: #5cc28f;
   --warn: #e0a84a;
+  --warn-text: var(--warn);
   --check-a: #1c1c1c;
   --check-b: #262626;
   color-scheme: dark;
@@ -167,7 +170,7 @@ button, select, input { font: inherit; color: inherit; }
 .av-name { overflow: hidden; text-overflow: ellipsis; }
 .av-name mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inherit; border-radius: 2px; }
 .av-target { color: var(--muted-fg); margin-left: 6px; }
-.av-dup { color: var(--warn); margin-left: 6px; font-size: 11px; }
+.av-dup { color: var(--warn-text); margin-left: 6px; font-size: 11px; }
 .av-cell { color: var(--muted-fg); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .av-dir .av-cell { opacity: .8; }
 .av-empty { padding: 24px 16px; color: var(--muted-fg); text-align: center; }
