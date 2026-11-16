@@ -90,24 +90,23 @@ orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the e
   `src/i18n.ts`, `src/dom.ts`, `src/focus.ts` (the tree's focus ring is for the keyboard).
 - `src/archive/` — format detection and readers: `zip.ts`, `tar.ts`, `open.ts` (compressed
   streams), `names.ts` (code pages), `model.ts`.
-- `src/codecs/` — Deflate and GZIP (fflate), Zstandard (fzstd), XZ (WebAssembly), and bzip2
-  written here. `sink.ts` collects the output and refuses or cuts it at the limit. Decoders
-  work in steps (64 KB of DEFLATE input, one bzip2 block, one XZ output buffer, one Zstandard
-  frame or 64 KB of its input) and stop at the first step past the limit, so a zip bomb
-  costs about one step more than the limit. Zstandard windows and content sizes are checked
+- `src/codecs/` — Deflate and GZIP (fflate), Zstandard (fzstd), and bzip2 and XZ written
+  here; `xz/` is a TypeScript port of [XZ Embedded](https://tukaani.org/xz/embedded.html)
+  v2024-12-30 (0BSD), and its file headers name the C files and what changed. `sink.ts`
+  collects the output and refuses or cuts it at the limit. Decoders work in steps (64 KB of
+  DEFLATE input, one bzip2 block, one Zstandard frame or 64 KB of its input) and stop at the
+  first step past the limit, so a zip bomb costs about one step more than the limit; XZ
+  checks each LZMA2 chunk's size against the limit before decoding it. Zstandard windows and content sizes are checked
   in the frame headers before fzstd allocates anything.
 - `src/nesting.ts` — depth and memory limits for archives inside archives.
 - `src/tree.ts`, `src/content.ts`, `src/display.ts` — the tree model, content sniffing and
   formatting, all DOM-free and tested.
-- `src/fixtures/` — builds the tests' archives in code, with small test-only bzip2 and
+- `src/fixtures/` — builds the tests' archives in code, with small test-only bzip2, XZ and
   Zstandard encoders.
 - `vendor/fflate/` — [fflate](https://github.com/101arrowz/fflate) 0.8.3 (MIT).
 - `vendor/fzstd/` — [fzstd](https://github.com/101arrowz/fzstd) 0.1.1 (MIT), patched (marked
   "Archive Viewer patch") so a streaming window slides without moving all of it after every
   block.
-- `vendor/xz/` — the WebAssembly build of [XZ Embedded](https://tukaani.org/xz/embedded.html)
-  (public domain) from [xz-decompress](https://github.com/httptoolkit/xz-decompress) 0.2.3
-  (MIT), base64-encoded so the tab loads it without a request.
 - `tools/` — `rasterize-icons.sh` renders the icons from `images/icon.svg`;
   `make-listing-samples.py` builds the fictional demo archives and `listing.json` is the spec
   for the listing images, made with the hub's `scripts/listing-image.sh`.
@@ -117,5 +116,6 @@ Branches follow git-flow: `feature/*` from `develop`, releases through `release/
 
 ## License
 
-MIT © Sergei Popov. Vendored code keeps its own terms: fflate and fzstd — MIT; XZ Embedded —
-public domain; walloc, xzwasm and xz-decompress — MIT (see `vendor/*/LICENSE`).
+MIT © Sergei Popov. Vendored code keeps its own terms: fflate and fzstd — MIT (see
+`vendor/*/LICENSE`). The XZ decoder in `src/codecs/xz/` is ported from XZ Embedded by Lasse
+Collin and Igor Pavlov, released under the BSD Zero Clause License (0BSD).

@@ -81,7 +81,7 @@ export async function openArchive(bytes: Uint8Array, options: OpenOptions): Prom
   let damaged = false
   if (magic === 'gzip') ({ bytes: inner, damaged } = gunzip(bytes, limit))
   else if (magic === 'bzip2') inner = bunzip2(bytes, limit).bytes
-  else if (magic === 'xz') inner = (await unxz(bytes, limit)).bytes
+  else if (magic === 'xz') inner = unxz(bytes, limit).bytes
   else inner = unzstd(bytes, limit).bytes
 
   if (isTar(inner)) {

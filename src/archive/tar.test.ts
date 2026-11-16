@@ -1,7 +1,7 @@
 import { assert, test } from 'orca/testing'
 import { concat, pax, tar, tarHeader, utf8 } from '../fixtures/build'
 import { bzip2 } from '../fixtures/bzip2'
-import { base64, smallTarXz } from '../fixtures/samples'
+import { xz } from '../fixtures/xz'
 import { zstd } from '../fixtures/zstd'
 import { EntryError } from './model'
 import { openArchive } from './open'
@@ -90,7 +90,7 @@ test('tar inside bzip2, xz and zstd', async () => {
   ])
   for (const [data, format] of [
     [bzip2(small), 'TAR + BZIP2'],
-    [base64(smallTarXz), 'TAR + XZ'],
+    [xz(small), 'TAR + XZ'],
     [zstd(small), 'TAR + ZSTD']
   ] as const) {
     const archive = await openArchive(data, { encoding: 'cp437' })

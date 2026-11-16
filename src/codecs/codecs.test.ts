@@ -2,7 +2,8 @@ import { assert, test } from 'orca/testing'
 import { gzipSync } from '../../vendor/fflate/fflate.mjs'
 import { concat, utf8 } from '../fixtures/build'
 import { bzip2 } from '../fixtures/bzip2'
-import { base64, bigDictXz, helloXz, sha256Xz, x86Xz } from '../fixtures/samples'
+import { base64, sha256Xz, x86Xz } from '../fixtures/samples'
+import { xz } from '../fixtures/xz'
 import { zstd } from '../fixtures/zstd'
 import { bunzip2 } from './bzip2'
 import { crc32 } from './crc32'
@@ -28,6 +29,7 @@ function noise(length: number): Uint8Array {
 }
 
 const helloZst = zstd(utf8('hello xz\n'))
+const helloXz = xz(utf8('hello xz\n'))
 
 /** 1000 × 'a', 5000 letters, 300 × 'bbbbb' and a newline: both bzip2 run-length steps. */
 const runs = concat(new Uint8Array(1000).fill(0x61), noise(5000), utf8('bbbbb'.repeat(300) + '\n'))
@@ -123,23 +125,127 @@ test('bunzip2 reports damaged data', () => {
   assert.throws(() => bunzip2(utf8('not bzip2'), 1 << 20), is(DamagedError))
 })
 
-test('unxz and unzstd unpack', async () => {
-  assert.equal(text((await unxz(base64(helloXz), 1024)).bytes), 'hello xz\n')
+test('unxz and unzstd unpack', () => {
+  assert.equal(text(unxz(helloXz, 1024).bytes), 'hello xz\n')
   assert.equal(text(unzstd(helloZst, 1024).bytes), 'hello xz\n')
   const cut = unzstd(helloZst, 4, true)
   assert.equal(text(cut.bytes), 'hell')
   assert.equal(cut.truncated, true)
 })
 
-test('unxz rejects truncated data', async () => {
-  const data = base64(helloXz)
-  await assert.rejects(() => unxz(data.subarray(0, 30), 1024), is(DamagedError))
+/** Bytes from a fixed LCG over all 256 values: data LZMA cannot shrink, so LZMA2 stores it. */
+function randomBytes(length: number, seed = 99): Uint8Array {
+  const out = new Uint8Array(length)
+  let x = seed
+  for (let i = 0; i < length; i++) {
+    x = (Math.imul(x, 1103515245) + 12345) >>> 0
+    out[i] = x >>> 24
+  }
+  return out
+}
+
+/** The control bytes of the first Block's LZMA2 chunks, reduced to their kind. */
+function chunkKinds(file: Uint8Array): number[] {
+  const kinds: number[] = []
+  let at = 12 + (file[12] + 1) * 4
+  for (;;) {
+    const control = file[at]
+    if (control === 0) return kinds
+    kinds.push(control >= 0x80 ? control & 0xe0 : control)
+    if (control >= 0x80) at += 5 + (control >= 0xc0 ? 1 : 0) + file[at + 3] * 256 + file[at + 4] + 1
+    else at += 3 + file[at + 1] * 256 + file[at + 2] + 1
+  }
+}
+
+test('unxz reads every check, several Blocks, sizes in Block Headers and every LZMA2 chunk kind', () => {
+  // Stored first, then LZMA with new properties, LZMA, stored, LZMA after a state reset.
+  const mixed = concat(randomBytes(20000), noise(40000), randomBytes(20000, 7), noise(40000))
+  const file = xz(mixed, { chunkSize: 20000 })
+  assert.deepEqual(chunkKinds(file), [0x01, 0xc0, 0x80, 0x02, 0xa0, 0x80])
+  assert.deepEqual(chunkKinds(xz(noise(50000), { chunkSize: 20000 })), [0xe0, 0x80, 0x80])
+  for (const options of [
+    {},
+    { check: 'none' as const },
+    { check: 'crc32' as const, sizes: true },
+    { blockSize: 33333, chunkSize: 5000 },
+    { lc: 0, lp: 4, pb: 0 },
+    { lc: 4, lp: 0, pb: 4, dictSize: 4096 }
+  ]) {
+    assert.deepEqual(unxz(xz(mixed, options), 1 << 20).bytes, mixed)
+  }
+  assert.equal(unxz(xz(new Uint8Array(0)), 1024).bytes.length, 0)
 })
 
-test('unxz says which valid files it cannot unpack instead of calling them damaged', async () => {
-  await assert.rejects(() => unxz(base64(bigDictXz), 1024), unsupported('xz-dictionary'))
-  await assert.rejects(() => unxz(base64(sha256Xz), 1024), unsupported('xz-options'))
-  await assert.rejects(() => unxz(base64(x86Xz), 1024), unsupported('xz-options'))
+test('unxz joins Streams and skips Stream Padding as xz -d does, and refuses what xz refuses', () => {
+  const a = noise(3000)
+  const b = utf8('second stream\n')
+  const zeros = (n: number) => new Uint8Array(n)
+  const joined = concat(xz(a), zeros(8), xz(b, { check: 'crc32' }), xz(new Uint8Array(0)), zeros(4))
+  assert.deepEqual(unxz(joined, 1 << 20).bytes, concat(a, b))
+  assert.throws(() => unxz(concat(xz(a), zeros(3)), 1 << 20), is(DamagedError))
+  assert.throws(() => unxz(concat(xz(a), utf8('junk')), 1 << 20), is(DamagedError))
+  assert.throws(() => unxz(concat(zeros(4), xz(a)), 1 << 20), is(DamagedError))
+  assert.throws(() => unxz(new Uint8Array(0), 1024), is(DamagedError))
+})
+
+/** Fails unless `run` throws a DamagedError; `what` names the case. */
+function assertDamaged(run: () => unknown, what: string): void {
+  try {
+    run()
+  } catch (error) {
+    if (error instanceof DamagedError) return
+    throw error
+  }
+  assert.fail(`not reported as damaged: ${what}`)
+}
+
+test('unxz finds every cut and every changed byte', () => {
+  const plain = concat(noise(700), randomBytes(300), noise(700))
+  for (const check of ['crc32', 'crc64'] as const) {
+    const first = xz(plain, { check, blockSize: 900, sizes: check === 'crc32' })
+    const file = concat(first, xz(utf8('tail\n')))
+    for (let length = 0; length < file.length; length++) {
+      // Cut between the Streams, the file is the first Stream alone.
+      if (length === first.length) assert.deepEqual(unxz(file.subarray(0, length), 1 << 20).bytes, plain)
+      else assertDamaged(() => unxz(file.subarray(0, length), 1 << 20), `cut at ${length}`)
+    }
+    for (let at = 0; at < file.length; at++) {
+      const changed = file.slice()
+      changed[at] ^= 0x55
+      assertDamaged(() => unxz(changed, 1 << 20), `byte ${at} changed`)
+    }
+  }
+})
+
+test('unxz refuses a match from farther back than the dictionary', () => {
+  const twice = noise(10000)
+  const plain = concat(twice, twice)
+  assert.deepEqual(unxz(xz(plain, { dictSize: 16384 }), 1 << 20).bytes, plain)
+  assert.throws(() => unxz(xz(plain, { dictSize: 4096, window: 16384 }), 1 << 20), is(DamagedError))
+})
+
+test('unxz keeps the first bytes in truncate mode, else stops at the limit', () => {
+  const plain = concat(noise(50000), randomBytes(50000))
+  const file = xz(plain, { blockSize: 30000 })
+  for (const limit of [1, 1000, 30000, 65000, 99999]) {
+    const cut = unxz(file, limit, true)
+    assert.deepEqual(cut.bytes, plain.subarray(0, limit))
+    assert.equal(cut.truncated, true)
+    assert.throws(() => unxz(file, limit), is(TooLargeError))
+  }
+  assert.equal(unxz(file, plain.length, true).truncated, true)
+  assert.equal(unxz(file, plain.length + 1, true).truncated, false)
+})
+
+test('unxz rejects truncated data', () => {
+  assert.throws(() => unxz(helloXz.subarray(0, 30), 1024), is(DamagedError))
+})
+
+test('unxz says which valid files it cannot unpack instead of calling them damaged', () => {
+  assert.equal(text(unxz(xz(utf8('hi'), { dictSize: 64 << 20 }), 1024).bytes), 'hi')
+  assert.throws(() => unxz(xz(utf8('hi'), { dictSize: 96 << 20 }), 1024), unsupported('xz-dictionary'))
+  assert.throws(() => unxz(base64(sha256Xz), 1024), unsupported('xz-options'))
+  assert.throws(() => unxz(base64(x86Xz), 1024), unsupported('xz-options'))
 })
 
 const ZSTD_MAGIC = [0x28, 0xb5, 0x2f, 0xfd]
