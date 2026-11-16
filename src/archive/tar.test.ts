@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { base256, concat, pax, tar, tarHeader, utf8 } from '../fixtures/build'
+import { base256, concat, gnuSparse, pax, sparseMap, tar, tarHeader, utf8 } from '../fixtures/build'
 import { bzip2 } from '../fixtures/bzip2'
 import { xz } from '../fixtures/xz'
 import { zstd } from '../fixtures/zstd'
@@ -214,4 +214,166 @@ test('a hard link reads the last entry at its target path before the link, on ea
   assert.equal(read(5), 'version two\n') // h3 → the second h → the second f.txt
   // tar and Python's tarfile cannot link to a file that only comes later either.
   assert.throws(() => archive.read(archive.entries[6], 100), (e: unknown) => e instanceof EntryError && e.code === 'missing')
+})
+
+/** Sparse runs: [offset, data]; the file is `size` bytes of zeros with each run at its offset. */
+type Runs = [number, Uint8Array][]
+
+function expand(runs: Runs, size: number): Uint8Array {
+  const out = new Uint8Array(size)
+  for (const [offset, data] of runs) out.set(data, offset)
+  return out
+}
+
+const stored = (runs: Runs) => concat(...runs.map(([, data]) => data))
+const mapOf = (runs: Runs): [number, number][] => runs.map(([offset, data]) => [offset, data.length])
+
+const RUNS: Runs = [
+  [0, utf8('HEAD')],
+  [1500, utf8('MIDDLE-DATA')],
+  [2990, utf8('TAILTAIL')]
+]
+// A hole at the end too: GNU tar records the size separately.
+const SIZE = 5000
+
+/** Many runs: 4 in an old GNU header and 21 per extension block, so this needs two of those. */
+const MANY: Runs = Array.from({ length: 30 }, (_, i) => [i * 700 + 3, utf8(`run ${i};`)])
+
+function sparseCases(runs: Runs, size: number): [string, ReturnType<typeof tar>][] {
+  const map = mapOf(runs)
+  return [
+    ['GNU S', tar([gnuSparse('sparse.bin', runs, size), { name: 'after.txt', data: utf8('after') }])],
+    [
+      'PAX 0.0',
+      tar([
+        pax([
+          ['GNU.sparse.size', String(size)],
+          ['GNU.sparse.numblocks', String(runs.length)],
+          ...map.flatMap(([offset, length]): [string, string][] => [
+            ['GNU.sparse.offset', String(offset)],
+            ['GNU.sparse.numbytes', String(length)]
+          ])
+        ]),
+        { name: 'sparse.bin', data: stored(runs) },
+        { name: 'after.txt', data: utf8('after') }
+      ])
+    ],
+    [
+      'PAX 0.1',
+      tar([
+        pax({
+          'GNU.sparse.size': String(size),
+          'GNU.sparse.numblocks': String(runs.length),
+          'GNU.sparse.name': 'sparse.bin',
+          'GNU.sparse.map': map.flat().join(',')
+        }),
+        { name: 'GNUSparseFile.4242/sparse.bin', data: stored(runs) },
+        { name: 'after.txt', data: utf8('after') }
+      ])
+    ],
+    [
+      'PAX 1.0',
+      tar([
+        pax({ 'GNU.sparse.major': '1', 'GNU.sparse.minor': '0', 'GNU.sparse.name': 'sparse.bin', 'GNU.sparse.realsize': String(size) }),
+        { name: 'GNUSparseFile.0/sparse.bin', data: concat(sparseMap(map), stored(runs)) },
+        { name: 'after.txt', data: utf8('after') }
+      ])
+    ]
+  ]
+}
+
+test('sparse files in every GNU format read back with their holes as zeros, real name and size', () => {
+  for (const [runs, size] of [
+    [RUNS, SIZE],
+    [MANY, 30 * 700]
+  ] as const) {
+    const want = expand(runs, size)
+    for (const [label, bytes] of sparseCases(runs, size)) {
+      const archive = parseTar(bytes, 'cp437')
+      const what = `${label}, ${runs.length} runs`
+      assert.equal(archive.damaged, false, what)
+      assert.deepEqual(archive.entries.map((e) => [e.path, e.size]), [['sparse.bin', size], ['after.txt', 5]], what)
+      assert.equal(archive.entries[0].mode! & 0o170000, 0o100000, what)
+      const whole = archive.read(archive.entries[0], size)
+      assert.equal(whole.truncated, false, what)
+      assert.deepEqual(whole.bytes, want, what)
+      const start = archive.read(archive.entries[0], 1505)
+      assert.equal(start.truncated, true, what)
+      assert.deepEqual(start.bytes, want.subarray(0, 1505), what)
+      assert.equal(text(archive.read(archive.entries[1], 100).bytes), 'after', what)
+    }
+  }
+})
+
+test('a 1.0 sparse map longer than a block, and a hard link to a sparse file', () => {
+  const runs: Runs = Array.from({ length: 80 }, (_, i) => [i * 100000, utf8(String(i))])
+  const size = 80 * 100000
+  const archive = parseTar(
+    tar([
+      pax({ 'GNU.sparse.major': '1', 'GNU.sparse.minor': '0', 'GNU.sparse.name': 'big.img', 'GNU.sparse.realsize': String(size) }),
+      { name: 'GNUSparseFile.0/big.img', data: concat(sparseMap(mapOf(runs)), stored(runs)) },
+      { name: 'link', type: '1', link: 'big.img' }
+    ]),
+    'cp437'
+  )
+  assert.ok(sparseMap(mapOf(runs)).length > 512)
+  assert.equal(archive.entries[0].size, size)
+  assert.deepEqual(archive.read(archive.entries[1], size).bytes, expand(runs, size))
+})
+
+test('a sparse map the viewer cannot use is "unsupported (sparse)", never the packed bytes', () => {
+  const unsupported = (e: unknown) => e instanceof EntryError && e.code === 'unsupported' && e.detail === 'tar-sparse'
+  const header = (records: Record<string, string>, data = stored(RUNS)) =>
+    tar([pax({ 'GNU.sparse.name': 'sparse.bin', ...records }), { name: 'GNUSparseFile.1/sparse.bin', data }, { name: 'after.txt' }])
+  const v01 = (map: string, size = String(SIZE)) => header({ 'GNU.sparse.size': size, 'GNU.sparse.map': map })
+  const v10 = (map: Uint8Array, realsize: string | null = String(SIZE)) =>
+    header(
+      { 'GNU.sparse.major': '1', 'GNU.sparse.minor': '0', ...(realsize === null ? {} : { 'GNU.sparse.realsize': realsize }) },
+      concat(map, stored(RUNS))
+    )
+  const cases: [string, Uint8Array][] = [
+    ['runs out of order', v01('1500,11,0,4,2990,8')],
+    ['overlapping runs', v01('0,4,2,11,2990,8')],
+    ['a run past the size', v01('0,4,1500,11,4995,8')],
+    ['more data than stored', v01('0,4,1500,11,2990,9000')],
+    ['an odd map', v01('0,4,1500')],
+    ['not numbers', v01('0,4,x,11,2990,8')],
+    ['no size', v01('0,4,1500,11,2990,8', '')],
+    ['0.0 offsets without lengths', header({ 'GNU.sparse.size': String(SIZE), 'GNU.sparse.offset': '0' })],
+    ['an unknown version', header({ 'GNU.sparse.major': '2', 'GNU.sparse.minor': '0', 'GNU.sparse.realsize': String(SIZE) })],
+    ['1.0 without its real size', v10(sparseMap(mapOf(RUNS)), null)],
+    ['1.0 map with letters', v10(concat(utf8('3\n0\n4\nabc\n'), new Uint8Array(500)))],
+    ['1.0 map without newlines', v10(new Uint8Array(512).fill(0x31))],
+    ['GNU S run past the size', tar([gnuSparse('sparse.bin', RUNS, 2000), { name: 'after.txt' }])]
+  ]
+  const wrong: string[] = []
+  for (const [what, bytes] of cases) {
+    const archive = parseTar(bytes, 'cp437')
+    assert.deepEqual(archive.entries.map((e) => e.path), ['sparse.bin', 'after.txt'], what)
+    try {
+      archive.read(archive.entries[0], 1 << 20)
+      wrong.push(`${what}: read`)
+    } catch (error) {
+      if (!unsupported(error)) wrong.push(`${what}: ${String(error)}`)
+    }
+  }
+  assert.deepEqual(wrong, [])
+})
+
+test('a tar cut inside a sparse map or its data is damaged', () => {
+  const damaged = (e: unknown) => e instanceof EntryError && e.code === 'damaged'
+  // The PAX header and its records, then the entry's header: the map starts at 1536.
+  const [, v10] = sparseCases(RUNS, SIZE)[3]
+  const mapCut = parseTar(v10.subarray(0, 1536 + 5), 'cp437')
+  assert.equal(mapCut.damaged, true)
+  assert.throws(() => mapCut.read(mapCut.entries[0], SIZE), damaged)
+  const dataCut = parseTar(v10.subarray(0, 2048 + 10), 'cp437')
+  assert.equal(dataCut.damaged, true)
+  assert.throws(() => dataCut.read(dataCut.entries[0], SIZE), damaged)
+  // The bytes before the cut still read.
+  assert.deepEqual(dataCut.read(dataCut.entries[0], 4).bytes, utf8('HEAD'))
+  const [, gnu] = sparseCases(MANY, 30 * 700)[0]
+  const extensionCut = parseTar(gnu.subarray(0, 512 + 100), 'cp437')
+  assert.equal(extensionCut.damaged, true)
+  assert.throws(() => extensionCut.read(extensionCut.entries[0], 100), damaged)
 })

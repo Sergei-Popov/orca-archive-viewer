@@ -17,6 +17,14 @@ All notable changes to this plugin are documented here. The format follows
   the plugin carries no WebAssembly. The same files open, with the same limits; damage that the
   WebAssembly build let through is now reported, as `xz -d` reports it.
 
+### Added
+
+- Sparse TAR files: GNU `S` headers and the PAX GNU.sparse formats 0.0, 0.1 and 1.0 (macOS
+  `tar -cf` writes 1.0 for any file with holes) show their real name and size, and the preview
+  and Save get the file with its holes as zeros. A sparse map the viewer cannot read says so
+  instead of showing the packed bytes. `tools/cli-crosscheck.sh` compares the tar reader with
+  Python's tarfile on archives from macOS tar, GNU tar and tarfile.
+
 ### Fixed
 
 - The file tree no longer keeps its keyboard focus ring after mouse clicks.

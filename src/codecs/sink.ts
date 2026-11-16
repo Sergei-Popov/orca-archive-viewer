@@ -31,7 +31,7 @@ export class UnsupportedDataError extends Error {
   }
 }
 
-export type UnsupportedFeature = 'zstd-window' | 'xz-dictionary' | 'xz-options'
+export type UnsupportedFeature = 'zstd-window' | 'xz-dictionary' | 'xz-options' | 'tar-sparse'
 
 /**
  * Output of a decoder, in one buffer that grows by doubling up to `limit`. Decoders still decode

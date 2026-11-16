@@ -173,6 +173,12 @@ export type TarItem = {
   v7?: boolean
   /** Corrupt the checksum. */
   badChecksum?: boolean
+  /** Old GNU magic "ustar  \0", which has no prefix field. */
+  gnu?: boolean
+  /** Raw bytes to place in the header before the checksum: [offset, bytes]. */
+  fields?: [number, Uint8Array][]
+  /** Blocks between the header and the data (old GNU sparse extension blocks). */
+  extension?: Uint8Array
 }
 
 function octal(value: number, length: number): Uint8Array {
@@ -205,11 +211,14 @@ export function tarHeader(item: TarItem, size: number): Uint8Array {
   h.set(utf8('        '), 148)
   h[156] = (item.type ?? '0').charCodeAt(0)
   if (item.link) h.set(utf8(item.link), 157)
-  if (!item.v7) {
+  if (item.gnu) {
+    h.set(utf8('ustar  \0'), 257)
+  } else if (!item.v7) {
     h.set(utf8('ustar\0'), 257)
     h.set(utf8('00'), 263)
     if (item.prefix) h.set(utf8(item.prefix), 345)
   }
+  for (const [at, bytes] of item.fields ?? []) h.set(bytes, at)
   let sum = 0
   for (const b of h) sum += b
   if (item.badChecksum) sum += 1
@@ -222,6 +231,7 @@ export function tar(items: TarItem[], options: { end?: boolean } = {}): Uint8Arr
   for (const item of items) {
     const data = item.data ?? new Uint8Array(0)
     parts.push(tarHeader(item, data.length))
+    if (item.extension) parts.push(item.extension)
     parts.push(data)
     parts.push(new Uint8Array((512 - (data.length % 512)) % 512))
   }
@@ -239,4 +249,29 @@ export function pax(records: Record<string, string> | [string, string][], type =
     body += `${length}${text}`
   }
   return { name: 'PaxHeader', type, data: utf8(body) }
+}
+
+/**
+ * A sparse file as GNU tar's old `S` header: `runs` are [offset, data] in file order; the header
+ * holds four, and each extension block 21 more.
+ */
+export function gnuSparse(name: string, runs: [number, Uint8Array][], realSize: number): TarItem {
+  const slot = ([offset, data]: [number, Uint8Array]) => concat(octal(offset, 12), octal(data.length, 12))
+  const fields: [number, Uint8Array][] = runs.slice(0, 4).map((run, i) => [386 + i * 24, slot(run)])
+  fields.push([483, octal(realSize, 12)])
+  const blocks: Uint8Array[] = []
+  for (let i = 4; i < runs.length; i += 21) {
+    const block = new Uint8Array(512)
+    runs.slice(i, i + 21).forEach((run, j) => block.set(slot(run), j * 24))
+    if (i + 21 < runs.length) block[504] = 1
+    blocks.push(block)
+  }
+  if (blocks.length) fields.push([482, new Uint8Array([1])])
+  return { name, type: 'S', gnu: true, fields, extension: concat(...blocks), data: concat(...runs.map(([, data]) => data)) }
+}
+
+/** The 1.0 sparse map GNU tar and bsdtar put before the data, padded to whole blocks. */
+export function sparseMap(runs: [number, number][]): Uint8Array {
+  const text = utf8(`${runs.length}\n` + runs.map(([offset, length]) => `${offset}\n${length}\n`).join(''))
+  return concat(text, new Uint8Array((512 - (text.length % 512)) % 512))
 }

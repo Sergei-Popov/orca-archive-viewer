@@ -1082,7 +1082,8 @@ export class ArchiveView {
       result = level.archive.read(entry, SAVE_LIMIT)
     } catch (error) {
       console.warn('[archive-viewer] cannot unpack for saving', entry.path, error)
-      this.showToast(this.t.saveFailed)
+      const feature = error instanceof EntryError && error.code === 'unsupported' ? this.t.features[error.detail as UnsupportedFeature] : ''
+      this.showToast(feature || this.t.saveFailed)
       return
     }
     if (result.truncated) {

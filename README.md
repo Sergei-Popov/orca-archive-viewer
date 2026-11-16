@@ -9,7 +9,7 @@ display" for them.
 | Files                                                                                      | What opens                                                   |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
 | `.zip`, `.jar`, `.war`, `.ear`, `.aar`, `.apk`, `.whl`, `.nupkg`, `.vsix`, `.xpi`, `.ipa`, `.epub` | ZIP: stored, Deflate, bzip2 and Zstandard entries, ZIP64, self-extracting prefixes |
-| `.tar`                                                                                     | ustar, GNU and PAX tar: long names, links, modes             |
+| `.tar`                                                                                     | ustar, GNU and PAX tar: long names, links, modes, sparse files |
 | `.gz`, `.tgz`, `.bz2`, `.tbz2`, `.tbz`, `.xz`, `.txz`, `.zst`, `.tzst`                     | the tar inside (`.tar.gz` and friends), or the single file   |
 
 Archive Viewer has:
@@ -79,7 +79,7 @@ No build step: Orca transpiles the TypeScript in `src/` on load.
 ```sh
 orca plugin dev watch . --check   # load, reload on save, stream logs
 orca plugin test .                # unit tests (src/**/*.test.ts)
-tools/cli-crosscheck.sh           # the decoders against the installed bzip2, zstd and xz, both ways
+tools/cli-crosscheck.sh           # decoders vs bzip2, zstd and xz both ways; tar vs Python's tarfile
 npx -p typescript tsc -p .        # type check, after `orca plugin types .`
 orca plugin validate .
 orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the editor
