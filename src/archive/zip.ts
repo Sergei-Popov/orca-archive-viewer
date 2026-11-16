@@ -101,7 +101,7 @@ export function parseZip(bytes: Uint8Array, encoding: LegacyEncoding): Archive {
 
   const raws = centralRecords(bytes, cdOffset + shift)
   const damaged = raws.length < total && total !== 0xffff
-  return build(bytes, raws, shift, encoding, commentBytes, damaged)
+  return build(bytes, raws, shift, encoding, commentBytes, damaged, new Map())
 }
 
 /** The central directory records from `at` on, while they last. */
@@ -266,7 +266,7 @@ function scanLocal(bytes: Uint8Array, encoding: LegacyEncoding): Archive {
     const central = new Map(centralRecords(bytes, at).map((raw) => [raw.localOffset, raw]))
     for (let i = 0; i < raws.length; i++) raws[i] = central.get(raws[i].localOffset) ?? raws[i]
   }
-  return build(bytes, raws, 0, encoding, new Uint8Array(0), true)
+  return build(bytes, raws, 0, encoding, new Uint8Array(0), true, new Map())
 }
 
 type Descriptor = { crc: number; packed: number; size: number; next: number }
@@ -305,13 +305,17 @@ function afterDescriptor(bytes: Uint8Array, at: number): number {
   return at + (signed ? 16 : 12)
 }
 
+/** Symbolic link targets by local header offset; null when the target cannot be read. */
+type LinkCache = Map<number, string | null>
+
 function build(
   bytes: Uint8Array,
   raws: Raw[],
   shift: number,
   encoding: LegacyEncoding,
   commentBytes: Uint8Array,
-  damaged: boolean
+  damaged: boolean,
+  links: LinkCache
 ): Archive {
   let legacyNames = false
   const entries: Entry[] = raws.map((raw, index) => {
@@ -337,12 +341,19 @@ function build(
       legacy: name.legacy
     }
     if (isLink && !entry.encrypted && raw.size < 4096) {
-      try {
-        const target = readRaw(bytes, raw, shift, 4096)
-        entry.link = { target: new TextDecoder().decode(target.bytes), hard: false }
-      } catch {
-        // A link we cannot read shows as a file.
-      }
+      // A link's target is its data, so it is unpacked the first time a row or the preview asks,
+      // never while the archive opens: thousands of records can point at one costly stream.
+      let link: Entry['link'] | null = null
+      Object.defineProperty(entry, 'link', {
+        enumerable: true,
+        get: () => {
+          if (link === null) {
+            const target = linkTarget(bytes, raw, shift, links)
+            link = target === null ? undefined : { target, hard: false }
+          }
+          return link
+        }
+      })
     }
     return entry
   })
@@ -364,9 +375,24 @@ function build(
       return readRaw(bytes, raw, shift, limit)
     },
     withEncoding(next) {
-      return build(bytes, raws, shift, next, commentBytes, damaged)
+      return build(bytes, raws, shift, next, commentBytes, damaged, links)
     }
   }
+}
+
+/** A link's target, read once per local header; null when it cannot be read (it shows as a file). */
+function linkTarget(bytes: Uint8Array, raw: Raw, shift: number, links: LinkCache): string | null {
+  const key = raw.localOffset + shift
+  let target = links.get(key)
+  if (target === undefined) {
+    try {
+      target = new TextDecoder().decode(readRaw(bytes, raw, shift, 4096).bytes)
+    } catch {
+      target = null
+    }
+    links.set(key, target)
+  }
+  return target
 }
 
 function readRaw(bytes: Uint8Array, raw: Raw, shift: number, limit: number): ReadResult {

@@ -12,6 +12,9 @@ export const MAX_ZSTD_WINDOW = 128 * 1024 * 1024
 
 const MAX_BLOCK = 128 * 1024
 
+/** Thrown from fzstd's output callback to stop it once the sink is full. */
+const FULL = new Error('zstd output is full')
+
 export type ZstdFrame = {
   start: number
   end: number
@@ -146,9 +149,18 @@ export function unzstd(
       }
       if (!frame.cut && frame.size !== null && !truncate) throw new TooLargeError(limit)
       // Unknown size, only the start of a long frame is wanted, or the frame is cut off (never
-      // pushed as final, so its whole blocks come out): stream it.
-      const stream = new Decompress((chunk) => sink.push(chunk))
-      feed(bytes, (chunk, final) => stream.push(chunk, final && !frame.cut), sink)
+      // pushed as final, so its whole blocks come out): stream it. A slice of input can hold far
+      // more than is wanted (an RLE block is 128 KiB for 4 bytes), so the decoder is stopped as
+      // soon as the sink is full rather than left to finish the slice.
+      const stream = new Decompress((chunk) => {
+        sink.push(chunk)
+        if (sink.full) throw FULL
+      })
+      try {
+        feed(bytes, (chunk, final) => stream.push(chunk, final && !frame.cut), sink)
+      } catch (stop) {
+        if (stop !== FULL) throw stop
+      }
     }
   } catch (caught) {
     const failure = asDecodeError(caught, 'zstd')

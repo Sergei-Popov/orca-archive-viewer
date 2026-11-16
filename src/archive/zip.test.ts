@@ -234,3 +234,27 @@ test('a ZIP cut inside its central directory uses the records it has, and one cu
   assert.deepEqual(cut.entries.map((e) => [e.path, e.size]), [['big.bin', 5000]])
   assert.throws(() => cut.read(cut.entries[0], 1 << 20), (e: unknown) => e instanceof EntryError && e.code === 'damaged')
 })
+
+test('ZIP link targets are read when shown, not while the archive opens', () => {
+  // 64 KiB of zstd that unpacks to 2 GiB, as the data of 100 links recorded at 5 bytes.
+  const frame = new Uint8Array(6 + 16384 * 4)
+  frame.set([0x28, 0xb5, 0x2f, 0xfd, 0, (17 - 10) << 3])
+  for (let i = 0; i < 16384; i++) {
+    const header = (i === 16383 ? 1 : 0) | (1 << 1) | (131072 << 3)
+    frame.set([header & 0xff, (header >> 8) & 0xff, header >> 16, 0x61], 6 + i * 4)
+  }
+  const symlink = (0o120777 << 16) >>> 0
+  const items = Array.from({ length: 100 }, (_, i) => ({ name: `bomb${i}`, data: frame, method: 93 as const, size: 5, external: symlink }))
+  items.push({ name: 'good', data: utf8('real.txt'), method: 0 as const, size: 8, external: symlink })
+  const bytes = zip(items)
+  let started = Date.now()
+  const archive = parseZip(bytes, 'cp437')
+  archive.withEncoding('cp866')
+  assert.ok(Date.now() - started < 300, `opening took ${Date.now() - started} ms`)
+  started = Date.now()
+  // Each read stops one byte past the recorded size, finds the data longer and shows a file.
+  for (const entry of archive.entries.slice(0, 100)) assert.equal(entry.link, undefined)
+  assert.ok(Date.now() - started < 1000, `reading 100 targets took ${Date.now() - started} ms`)
+  assert.deepEqual(archive.entries[100].link, { target: 'real.txt', hard: false })
+  assert.deepEqual(archive.withEncoding('cp866').entries[100].link, { target: 'real.txt', hard: false })
+})

@@ -39,6 +39,10 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- ZIP symbolic link targets are read when a row or the preview shows them, once per local
+  header, instead of all while the archive opens and again on each code page switch: a 70 KB
+  crafted ZIP used to freeze the tab for 12 seconds. Zstandard in a size-capped read stops as
+  soon as it has the bytes it needs.
 - Stored, bzip2 and Zstandard ZIP entries that unpack to more than their recorded size are
   damaged, as Deflate entries already were; bzip2 and Zstandard stop one byte past that size.
 - A ZIP cut off before its end record (a partial download) lists the entries in front of the

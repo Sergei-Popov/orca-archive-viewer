@@ -349,6 +349,30 @@ function rleFrame(count: number, value: number): Uint8Array {
   return out
 }
 
+/** A zstd frame with no content size and a 128 KiB window: `count` RLE blocks of 128 KiB. */
+function rleStream(count: number, value: number): Uint8Array {
+  const out = new Uint8Array(6 + count * 4)
+  out.set([0x28, 0xb5, 0x2f, 0xfd, 0, (17 - 10) << 3])
+  for (let i = 0; i < count; i++) {
+    const header = (i === count - 1 ? 1 : 0) | (1 << 1) | (131072 << 3)
+    out.set([header & 0xff, (header >> 8) & 0xff, header >> 16, value], 6 + i * 4)
+  }
+  return out
+}
+
+test('unzstd in truncate mode stops as soon as it has the bytes it was asked for', () => {
+  // 64 KiB of input that unpacks to 2 GiB: one slice used to be decoded to its end.
+  const bomb = rleStream(16384, 0x61)
+  assert.ok(bomb.length < 65536 + 16)
+  const started = Date.now()
+  for (let i = 0; i < 20; i++) {
+    const { bytes, truncated } = unzstd(bomb, 4096, true)
+    assert.deepEqual([bytes.length, truncated, bytes[4095]], [4096, true, 0x61])
+  }
+  assert.ok(Date.now() - started < 500, `20 reads took ${Date.now() - started} ms`)
+  assert.throws(() => unzstd(bomb, 4096), (e: unknown) => e instanceof TooLargeError)
+})
+
 test('unzstd unpacks a frame that records a content size over 256 MiB', () => {
   // fzstd compared its output buffer with `== 1`, which joined it into a string: past 256 MiB
   // that threw "Invalid string length" and the file was called damaged; below, it was slow.
