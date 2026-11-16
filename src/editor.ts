@@ -1,10 +1,12 @@
 // The custom editor: Orca opens an archive in a main editor tab here — from the file tree, a file
-// link in a chat, or `orca file open` — and sends its bytes. Orca keeps files over 64 MiB out of
-// custom editors and shows its own notice instead. The viewer never edits, so Orca never saves the
+// link in a chat, or `orca file open` — and sends its bytes. Orca 1.4.258 reads at most 50 MiB
+// for a tab (its 64 MiB plugin bridge limit is never reached) and shows its own notice for larger
+// files instead. The viewer never edits, so Orca never saves the
 // tab; an outside write reopens the archive and keeps the open folders and the selection.
 
 import { defaultLegacyEncoding } from './archive/names'
 import { openArchive } from './archive/open'
+import { CancelledError } from './codecs/steps'
 import { stringsFor } from './i18n'
 import { installStyles } from './styles'
 import { ArchiveView, describeOpenError } from './view'
@@ -42,12 +44,14 @@ if (!api) {
     try {
       // Orca never tells an editor the file's name; the matched suffix names a lone .gz's file.
       const name = doc.fileType ? `file.${doc.fileType}` : undefined
-      const archive = await openArchive(bytes, { encoding: view.encoding, name })
+      // Unpacking gives the thread back now and then, so a newer document stops it.
+      const pacing = { cancelled: () => current !== generation }
+      const archive = await openArchive(bytes, { encoding: view.encoding, name, pacing })
       if (current !== generation) return
       view.show(archive)
       loaded = true
     } catch (error) {
-      if (current !== generation) return
+      if (current !== generation || error instanceof CancelledError) return
       console.warn('[archive-viewer] cannot open the archive', error)
       loaded = false
       view.showError(strings.errorTitle, describeOpenError(error, strings, locale))

@@ -6,9 +6,11 @@ import { type Archive, type Entry, EntryError, type ReadResult } from './archive
 import { LEGACY_ENCODINGS, type LegacyEncoding } from './archive/names'
 import { NotArchiveError, UnsupportedFormatError, isArchive, openArchive } from './archive/open'
 import { DamagedError, TooLargeError, UnsupportedDataError, type UnsupportedFeature } from './codecs/sink'
+import { CancelledError } from './codecs/steps'
 import { type ContentKind, IMAGE_TYPES, classify, extension, hexDump, imageType, nameKind } from './content'
-import { formatBytes, formatCrc, formatDate, formatMode, formatRatio, formatShortDate, formatSize } from './display'
+import { formatBytes, formatCrc, formatDate, formatMode, formatRatio, formatShortDate, formatSize, saveName, visibleText } from './display'
 import { append, h, highlight, svg } from './dom'
+import { pointerFocus } from './focus'
 import { type Strings, fill } from './i18n'
 import { type IconName, icon } from './icons'
 import { TooDeepError, autoOpens, heldBytes, nestedLimit } from './nesting'
@@ -16,10 +18,11 @@ import {
   type Node as TreeNode,
   type Row,
   ancestors,
-  buildTree,
+  archiveTree,
   findNode,
   folderPaths,
   renamedPaths,
+  shownPath,
   visibleRows
 } from './tree'
 
@@ -84,6 +87,11 @@ function storageSet(key: string, value: string | null): void {
   } catch {
     // Storage can be off in a frame; the preference just does not stick.
   }
+}
+
+/** A ZIP method as the details show it: "Stored" is a word, the others are names. */
+export function methodLabel(method: string | undefined, t: Strings): string {
+  return method === 'Stored' ? t.stored : (method ?? '')
 }
 
 /** The message for an archive that cannot be opened. */
@@ -285,7 +293,7 @@ export class ArchiveView {
   }
 
   private newLevel(archive: Archive, label: string, fresh: boolean): Level {
-    const root = buildTree(archive.entries)
+    const root = archiveTree(archive)
     const level: Level = {
       archive,
       label,
@@ -341,8 +349,8 @@ export class ArchiveView {
       const current = index === this.levels.length - 1
       const crumb = h(
         'button',
-        { className: 'av-crumb', type: 'button', title: item.label, 'aria-current': current ? 'true' : undefined },
-        item.label
+        { className: 'av-crumb', type: 'button', title: visibleText(item.label), 'aria-current': current ? 'true' : undefined },
+        visibleText(item.label)
       )
       if (!current) crumb.addEventListener('click', () => this.goTo(index))
       this.crumbs.append(crumb)
@@ -361,7 +369,8 @@ export class ArchiveView {
 
     this.encodingField.hidden = !archive.legacyNames
     this.encodingSelect.value = archive.encoding
-    this.notice.hidden = !archive.damaged
+    // A tree past its folder budget is shown as damaged too: only crafted names get there.
+    this.notice.hidden = !archive.damaged && !root.cut
     // A damaged .gz of one file shows the part of that file that came before the damage.
     this.noticeText.textContent = archive.kind === 'single' ? t.damagedFile : t.damaged
     const folders = root.folders > 0
@@ -459,7 +468,11 @@ export class ArchiveView {
     const open = this.isOpen(node, level)
     const [kind, kindClass] = this.kindIcon(node)
     const name = h('span', { className: 'av-name' }, highlight(node.name, level.filter))
-    if (node.entry?.link) append(name, h('span', { className: 'av-target' }, `→ ${node.entry.link.target}`))
+    if (node.entry?.link) append(name, h('span', { className: 'av-target' }, `→ ${visibleText(node.entry.link.target)}`))
+    if (node.duplicate) {
+      const { copy, copies } = node.duplicate
+      append(name, h('span', { className: 'av-dup' }, fill(this.t.duplicate, { n: String(copy), count: String(copies) })))
+    }
     const packedKnown = node.dir ? node.hasPacked && node.files > 0 : node.entry?.packed !== undefined
     const row = h(
       'div',
@@ -470,7 +483,7 @@ export class ArchiveView {
         'aria-selected': node.path === level.selected ? 'true' : 'false',
         'aria-expanded': node.dir ? String(open) : undefined,
         'data-index': index,
-        title: node.path
+        title: visibleText(shownPath(node))
       },
       h('span', { className: 'av-twisty', 'data-open': String(open) }, node.dir && node.children.length ? svg(icon('chevron')) : null),
       h('span', { className: `av-kind ${kindClass}` }, svg(icon(kind))),
@@ -557,7 +570,7 @@ export class ArchiveView {
     const renamed = renamedPaths(level.archive.entries, archive.entries)
     const rename = (path: string) => renamed.get(path) ?? path
     level.archive = archive
-    level.root = buildTree(archive.entries)
+    level.root = archiveTree(archive)
     level.expanded = new Set([...level.expanded].map(rename))
     if (level.selected) level.selected = rename(level.selected)
     level.scrollTop = this.scroll.scrollTop
@@ -603,6 +616,7 @@ export class ArchiveView {
       else if (this.canOpen(row.node)) void this.openNested(row.node)
     })
     this.scroll.addEventListener('keydown', (event) => this.onTreeKey(event))
+    pointerFocus(this.scroll)
 
     this.filterInput.addEventListener('input', () => this.setFilter(this.filterInput.value))
     this.filterInput.addEventListener('keydown', (event) => {
@@ -768,7 +782,7 @@ export class ArchiveView {
       if (this.saves(archive, root)) add(t.ratio, formatRatio(archive.archiveSize, root.size, this.locale))
     }
     if (archive.legacyNames) add(t.encoding, t[archive.encoding])
-    const title = this.levels.length > 1 ? level.label : fill(t.archiveOf, { format: archive.format })
+    const title = this.levels.length > 1 ? visibleText(level.label) : fill(t.archiveOf, { format: archive.format })
     return h(
       'div',
       { className: 'av-body' },
@@ -788,8 +802,8 @@ export class ArchiveView {
     return h(
       'header',
       { className: 'av-head' },
-      h('div', { className: 'av-title' }, svg(icon(iconName, iconClass)), h('h2', { title: node.name }, node.name)),
-      node.path.includes('/') ? h('div', { className: 'av-path' }, node.path) : null,
+      h('div', { className: 'av-title' }, svg(icon(iconName, iconClass)), h('h2', { title: visibleText(node.name) }, visibleText(node.name))),
+      shownPath(node).includes('/') ? h('div', { className: 'av-path' }, visibleText(shownPath(node))) : null,
       list,
       actions
     )
@@ -821,7 +835,7 @@ export class ArchiveView {
     }
     add(t.modified, formatDate(node.mtime, this.locale))
     if (node.entry?.mode !== undefined) add(t.mode, this.mode(node.entry.mode), { mono: true })
-    const actions = h('div', { className: 'av-actions' }, this.copyButton(node.path))
+    const actions = h('div', { className: 'av-actions' }, this.copyButton(shownPath(node)))
     return this.head(node, 'folder', 'av-folder', list, actions)
   }
 
@@ -839,11 +853,15 @@ export class ArchiveView {
       const ratio = entry.packed < entry.size ? formatRatio(entry.packed, entry.size, this.locale) : ''
       add(t.packed, ratio ? `${this.size(entry.packed)} · ${ratio}` : this.size(entry.packed), { title: this.exact(entry.packed) })
     }
-    add(t.method, entry.method ?? '')
+    add(t.method, methodLabel(entry.method, t))
     add(t.modified, formatDate(entry.mtime, this.locale))
     if (entry.mode !== undefined) add(t.mode, this.mode(entry.mode), { mono: true })
     if (entry.crc !== undefined && level.archive.kind === 'zip') add(t.crc, formatCrc(entry.crc), { mono: true })
-    if (entry.link) add(entry.link.hard ? t.hardLink : t.link, entry.link.target, { mono: true })
+    if (entry.link) add(entry.link.hard ? t.hardLink : t.link, visibleText(entry.link.target), { mono: true })
+    if (node.duplicate) {
+      const { copy, copies } = node.duplicate
+      add(t.duplicateLabel, fill(t.duplicateHint, { n: String(copy), count: String(copies) }))
+    }
 
     const actions = h('div', { className: 'av-actions' })
     const symlink = !!entry.link && !entry.link.hard
@@ -854,12 +872,12 @@ export class ArchiveView {
       save.addEventListener('click', () => this.save(node, entry))
       actions.append(save)
     }
-    actions.append(this.copyButton(node.path))
+    actions.append(this.copyButton(shownPath(node)))
 
     const body = h('div', { className: 'av-body' })
     this.body = body
     if (symlink) {
-      body.append(this.callout('link', '', `${t.link} ${entry.link?.target ?? ''}`))
+      body.append(this.callout('link', '', `${t.link} ${visibleText(entry.link?.target ?? '')}`))
     } else if (entry.encrypted) {
       body.append(this.callout('lock', 'av-warn', t.encrypted))
     } else {
@@ -928,6 +946,8 @@ export class ArchiveView {
       if (result.truncated) parts.push(h('p', { className: 'av-note' }, fill(t.textCut, { size: this.size(result.bytes.length) })))
       parts.push(this.textBody(content.decoded.text, actions))
     } else {
+      // An archive in a format the viewer does not open says so, above its first bytes.
+      if (content.kind === 'unsupported') parts.push(this.callout('archive', 'av-warn', fill(t.unsupported, { format: content.format })))
       const shown = Math.min(result.bytes.length, HEX_LIMIT)
       parts.push(h('p', { className: 'av-note' }, fill(t.binary, { size: this.size(shown) })))
       parts.push(h('pre', { className: 'av-hex' }, hexDump(result.bytes, HEX_LIMIT)))
@@ -1030,6 +1050,10 @@ export class ArchiveView {
     const entry = node.entry
     if (!level || !entry || this.opening) return
     this.opening = true
+    const selected = level.selected
+    // The tree stays usable while a big archive unpacks: leaving this level or selecting another
+    // row stops the work.
+    const moved = () => this.level !== level || level.selected !== selected
     const label = button?.lastChild?.textContent ?? ''
     if (button) {
       button.disabled = true
@@ -1045,9 +1069,10 @@ export class ArchiveView {
       const archive = await openArchive(result.bytes, {
         encoding: this.encoding,
         name: node.name,
-        limit: budget - result.bytes.length
+        limit: budget - result.bytes.length,
+        pacing: { cancelled: moved }
       })
-      if (this.level !== level) return
+      if (moved()) return
       level.selected = node.path
       level.scrollTop = this.scroll.scrollTop
       const next = this.newLevel(archive, node.name, true)
@@ -1055,7 +1080,7 @@ export class ArchiveView {
       this.levels.push(next)
       this.renderLevel(true)
     } catch (error) {
-      if (this.level !== level || level.selected !== node.path) return
+      if (this.level !== level || level.selected !== node.path || error instanceof CancelledError) return
       const expected = [UnsupportedFormatError, NotArchiveError, TooLargeError, TooDeepError, UnsupportedDataError]
       if (!expected.some((type) => error instanceof type)) {
         console.warn('[archive-viewer] cannot open nested archive', node.path, error)
@@ -1080,7 +1105,8 @@ export class ArchiveView {
       result = level.archive.read(entry, SAVE_LIMIT)
     } catch (error) {
       console.warn('[archive-viewer] cannot unpack for saving', entry.path, error)
-      this.showToast(this.t.saveFailed)
+      const feature = error instanceof EntryError && error.code === 'unsupported' ? this.t.features[error.detail as UnsupportedFeature] : ''
+      this.showToast(feature || this.t.saveFailed)
       return
     }
     if (result.truncated) {
@@ -1088,7 +1114,8 @@ export class ArchiveView {
       return
     }
     // A copy: the entry can be a view into the whole archive.
-    saveAs({ suggestedName: node.name, mimeType: IMAGE_TYPES[extension(node.name)], data: result.bytes.slice() }).then(
+    // Without hidden characters, so the name the dialog offers is the one it looks like.
+    saveAs({ suggestedName: saveName(node.name, 'file'), mimeType: IMAGE_TYPES[extension(node.name)], data: result.bytes.slice() }).then(
       (outcome) => {
         if (outcome.status === 'saved') this.showToast(this.t.saved)
       },

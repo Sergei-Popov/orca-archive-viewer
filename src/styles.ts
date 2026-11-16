@@ -25,6 +25,8 @@ export const css = String.raw`
   --archive: #7c5cc4;
   --picture: #2f8f62;
   --warn: #b7791f;
+  /* Small warning text: --warn itself is 3.6:1 on white; this is 7.6:1, and 5.2:1 on a selected row. */
+  --warn-text: color-mix(in srgb, var(--warn) 60%, var(--fg));
   --check-a: #ffffff;
   --check-b: #ececec;
   --ui-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -52,6 +54,7 @@ export const css = String.raw`
   --archive: #a68cf0;
   --picture: #5cc28f;
   --warn: #e0a84a;
+  --warn-text: var(--warn);
   --check-a: #1c1c1c;
   --check-b: #262626;
   color-scheme: dark;
@@ -138,7 +141,7 @@ button, select, input { font: inherit; color: inherit; }
 }
 .av-cols span:not(:first-child), .av-cell { text-align: right; }
 .av-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; outline: none; }
-.av-scroll:focus-visible { box-shadow: inset 0 0 0 1px var(--ring); }
+.av-scroll:focus-visible:not([data-pointer]) { box-shadow: inset 0 0 0 1px var(--ring); }
 .av-rows { position: absolute; left: 0; right: 0; top: 0; }
 .av-row {
   display: grid; grid-template-columns: 16px 16px var(--columns); gap: 0 8px; align-items: center;
@@ -161,9 +164,13 @@ button, select, input { font: inherit; color: inherit; }
 .av-title .av-arch { color: var(--archive); }
 .av-title .av-pic { color: var(--picture); }
 .av-title .av-lock { color: var(--warn); }
+/* Names from the archive are isolated, so right-to-left text in one cannot reorder what is
+   around it. */
+.av-name, .av-target, .av-crumb, .av-title h2, .av-path, .av-overview h2, .av-comment { unicode-bidi: isolate; }
 .av-name { overflow: hidden; text-overflow: ellipsis; }
 .av-name mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inherit; border-radius: 2px; }
 .av-target { color: var(--muted-fg); margin-left: 6px; }
+.av-dup { color: var(--warn-text); margin-left: 6px; font-size: 11px; }
 .av-cell { color: var(--muted-fg); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .av-dir .av-cell { opacity: .8; }
 .av-empty { padding: 24px 16px; color: var(--muted-fg); text-align: center; }

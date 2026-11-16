@@ -67,3 +67,64 @@ export function formatMode(mode: number): string {
 export function formatCrc(crc: number): string {
   return crc.toString(16).toUpperCase().padStart(8, '0')
 }
+
+/**
+ * Characters that change how a name looks without being seen: format characters such as the
+ * bidi controls (U+202E makes `photo` U+202E `gpj.exe` read "photoexe.jpg") and zero-width
+ * spaces, control characters, and line and paragraph separators. Format characters in SHOWN are
+ * left alone (see there).
+ */
+const HIDDEN = /[\p{Cf}\p{Cc}\p{Zl}\p{Zp}]/gu
+
+/**
+ * Format characters that names use as ordinary text: the zero width non-joiner and joiner
+ * (Persian and Hindi words, emoji sequences such as a woman and a laptop) and the soft hyphen;
+ * and the Arabic, Syriac and Kaithi number signs, which draw a visible mark.
+ */
+const SHOWN = new Set([0x00ad, 0x200c, 0x200d, 0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605, 0x06dd, 0x070f, 0x0890, 0x0891, 0x08e2, 0x110bd, 0x110cd])
+
+const shown = (c: string) => SHOWN.has(c.codePointAt(0)!)
+
+/** `text` with every hidden character written out as ⟨U+202E⟩, for names, titles and paths. */
+export function visibleText(text: string): string {
+  return text.replace(HIDDEN, (c) => (shown(c) ? c : `⟨U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}⟩`))
+}
+
+/** A file name to suggest when saving: the last segment, without hidden characters. */
+export function saveName(name: string, fallback: string): string {
+  return name.slice(name.lastIndexOf('/') + 1).replace(HIDDEN, (c) => (shown(c) ? c : '')).trim() || fallback
+}
+
+/**
+ * `text` cut into pieces, the ones that contain `needle` (ignoring case) marked. Each code point
+ * is lowercased on its own and mapped back, so a match after a letter whose lowercase is longer
+ * (Turkish İ becomes i and a combining dot) marks the right characters; a match that covers part
+ * of such a letter marks all of it.
+ */
+export function highlightParts(text: string, needle: string): { text: string; mark: boolean }[] {
+  const query = needle.trim().toLowerCase()
+  if (!query) return [{ text, mark: false }]
+  let lower = ''
+  // from[k]: where in `text` the code point behind lower[k] starts; ends[k]: where it ends.
+  const from: number[] = []
+  const ends: number[] = []
+  for (let i = 0; i < text.length; ) {
+    const size = text.codePointAt(i)! > 0xffff ? 2 : 1
+    const piece = text.slice(i, i + size).toLowerCase()
+    for (let k = 0; k < piece.length; k++) from.push(i), ends.push(i + size)
+    lower += piece
+    i += size
+  }
+  const parts: { text: string; mark: boolean }[] = []
+  let at = 0
+  for (let i = lower.indexOf(query); i >= 0; i = lower.indexOf(query, i + query.length)) {
+    const start = Math.max(from[i], at)
+    const end = ends[i + query.length - 1]
+    if (end <= start) continue
+    if (start > at) parts.push({ text: text.slice(at, start), mark: false })
+    parts.push({ text: text.slice(start, end), mark: true })
+    at = end
+  }
+  if (at < text.length || !parts.length) parts.push({ text: text.slice(at), mark: false })
+  return parts
+}

@@ -1,0 +1,110 @@
+{
+  "accent": "#F59E0B",
+  "title": ["Archive", "Viewer"],
+  "icon": "images/icon.png",
+  "cover": {
+    "out": "images/cover.png",
+    "alt": "Archive Viewer on a 1,856-file ZIP: the folder tree with sizes, and the selected image's size, method, CRC-32 and dimensions.",
+    "tagline": "Look inside .zip, .jar and .tar.gz without unpacking.",
+    "chips": [".zip", ".jar", ".tar.gz", ".whl", ".zst"],
+    "chipMain": 0,
+    "stage": {
+      "file": ".orca/listing/samples/aurora-web-3.2.0.zip",
+      "theme": "dark",
+      "scale": 2,
+      "width": 440,
+      "height": 498,
+      "waitFor": { "text": "README.md" },
+      "act": [
+        { "clickText": "public", "offset": [-36, 0] },
+        { "clickText": "images", "offset": [-36, 0] },
+        { "clickText": "images" },
+        { "key": "ArrowDown" },
+        { "clickText": "hero.png" },
+        { "hover": [430, 480] }
+      ],
+      "origin": { "x": 0, "y": 0 }
+    }
+  },
+  "screenshots": [
+    {
+      "out": "images/shot-1-nested.png",
+      "headline": "Open archives inside archives",
+      "alt": "A jar inside a ZIP opened in place: a trail back to Archive, the jar's 86 files in 16 folders, and its MANIFEST.MF previewed.",
+      "stage": {
+        "file": ".orca/listing/samples/aurora-web-3.2.0.zip",
+        "waitFor": { "text": "README.md" },
+        "act": [
+          { "clickText": "vendor", "offset": [-36, 0] },
+          { "clickText": "observatory-2.0.0.jar" },
+          { "key": "Enter" },
+          { "waitForText": "META-INF" },
+          { "clickText": "META-INF", "offset": [-36, 0] },
+          { "clickText": "MANIFEST.MF" },
+          { "hover": [940, 520] }
+        ]
+      }
+    },
+    {
+      "out": "images/shot-2-filter.png",
+      "headline": "Filter thousands of files by name",
+      "alt": "A .tar.xz of 1,856 files filtered by .ts: the matches in their folders, and src/app/router.ts opened with line numbers.",
+      "stage": {
+        "file": ".orca/listing/samples/aurora-web-3.2.0.tar.xz",
+        "waitFor": { "text": "README.md" },
+        "act": [
+          { "key": "f", "modifiers": ["meta"] },
+          { "type": ".ts" },
+          { "clickText": "router.ts" },
+          { "hover": [940, 520] }
+        ]
+      }
+    },
+    {
+      "out": "images/shot-3-preview.png",
+      "headline": "Preview images and code in place",
+      "alt": "hero.png previewed without unpacking, found with the .png filter, under its size, method, CRC-32 and dimensions: 1600 × 640.",
+      "stage": {
+        "file": ".orca/listing/samples/aurora-web-3.2.0.zip",
+        "waitFor": { "text": "README.md" },
+        "act": [
+          { "key": "f", "modifiers": ["meta"] },
+          { "type": ".png" },
+          { "clickText": "hero.png" },
+          { "hover": [940, 520] }
+        ]
+      }
+    },
+    {
+      "out": "images/shot-4-code-pages.png",
+      "headline": "Names from old DOS-era zips, fixed",
+      "alt": "Russian file names stored in DOS code page 866 read correctly once CP866 · DOS Cyrillic is picked in the Names menu.",
+      "stage": {
+        "file": ".orca/listing/samples/projects-2019.zip",
+        "waitFor": { "text": "13 files" },
+        "act": [
+          { "select": "Names", "option": "CP866 · DOS Cyrillic" },
+          { "clickLabel": "Expand all folders" },
+          { "clickText": "Отчёт за I квартал.txt" },
+          { "hover": [940, 520] }
+        ]
+      }
+    },
+    {
+      "out": "images/shot-5-save.png",
+      "headline": "Save one file, not the whole archive",
+      "alt": "CHANGELOG.md saved on its own with Save… and a Saved notice, below its size, method and CRC-32. Shown in Orca's light theme.",
+      "stage": {
+        "file": ".orca/listing/samples/aurora-web-3.2.0.zip",
+        "theme": "light",
+        "saveAs": "saved",
+        "waitFor": { "text": "README.md" },
+        "act": [
+          { "clickText": "CHANGELOG.md" },
+          { "clickText": "Save…" },
+          { "hover": [940, 520] }
+        ]
+      }
+    }
+  ]
+}

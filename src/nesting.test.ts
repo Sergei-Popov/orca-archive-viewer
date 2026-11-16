@@ -4,10 +4,10 @@ import { EntryError } from './archive/model'
 import { MAX_UNPACKED, openArchive } from './archive/open'
 import { parseZip } from './archive/zip'
 import { TooLargeError, UnsupportedDataError, type UnsupportedFeature } from './codecs/sink'
-import { tar, utf8, zip } from './fixtures/build'
+import { concat, tar, utf8, zip } from './fixtures/build'
 import { stringsFor } from './i18n'
 import { MAX_HELD, MAX_LEVELS, TooDeepError, autoOpens, heldBytes, nestedLimit } from './nesting'
-import { describeOpenError } from './view'
+import { describeOpenError, methodLabel } from './view'
 
 const is = (type: abstract new (...args: never[]) => unknown) => (error: unknown) => error instanceof type
 
@@ -26,10 +26,18 @@ test('nestedLimit caps the depth and what all levels hold together', () => {
   assert.throws(() => nestedLimit(MAX_LEVELS, 0), (e: unknown) => e instanceof TooDeepError && e.levels === MAX_LEVELS)
 })
 
-test('heldBytes counts the unpacked stream of compressed levels only', async () => {
-  const tgz = await openArchive(gzipSync(tar([{ name: 'a.txt', data: utf8('12345') }])), { encoding: 'cp437' })
-  assert.equal(heldBytes(tgz, 100), 105)
+test('heldBytes counts the whole buffer a compressed level unpacked into, and nothing for others', async () => {
+  const inner = tar([{ name: 'a.txt', data: utf8('12345') }])
+  const tgz = await openArchive(gzipSync(inner), { encoding: 'cp437' })
+  assert.equal(heldBytes(tgz, 100), 100 + inner.length)
+  assert.equal(heldBytes(tgz.withEncoding('cp866'), 100), 100 + inner.length)
+  const single = await openArchive(gzipSync(utf8('12345')), { encoding: 'cp437' })
+  assert.equal(heldBytes(single, 0), 5)
   assert.equal(heldBytes(parseZip(zip([{ name: 'a.txt', data: utf8('12345') }]), 'cp437'), 100), 100)
+  assert.equal(heldBytes(await openArchive(inner, { encoding: 'cp437' }), 100), 100)
+  // The buffer, not the entries: a stream that unpacks to more than its tar holds.
+  const padded = await openArchive(gzipSync(concat(inner, new Uint8Array(1 << 20))), { encoding: 'cp437' })
+  assert.equal(heldBytes(padded, 0), inner.length + (1 << 20))
 })
 
 test('a chain of .gz inside .gz stops at the level cap, and each level gets what is left', async () => {
@@ -70,4 +78,11 @@ test('messages for limits name the limit, in English and Russian', () => {
       assert.equal(describeOpenError(new EntryError('unsupported', feature), t, locale), text)
     }
   }
+})
+
+test('the ZIP method "Stored" is translated; method names are not', () => {
+  assert.equal(methodLabel('Stored', stringsFor('ru')), 'Без сжатия')
+  assert.equal(methodLabel('Stored', stringsFor('en')), 'Stored')
+  assert.equal(methodLabel('Deflate', stringsFor('ru')), 'Deflate')
+  assert.equal(methodLabel(undefined, stringsFor('ru')), '')
 })

@@ -4,6 +4,7 @@
 import { Inflate } from '../../vendor/fflate/fflate.mjs'
 import { crc32 } from './crc32'
 import { DamagedError, Sink, TooLargeError, asDecodeError, feed } from './sink'
+import { type Steps, run } from './steps'
 
 const SLICE = 1 << 16
 
@@ -37,6 +38,31 @@ export function inflate(
     return { bytes: bytes.subarray(0, limit), truncated: true }
   }
   return { bytes, truncated: false }
+}
+
+/**
+ * Where the raw DEFLATE stream that starts at `start` ends, found by inflating it with the output
+ * thrown away; null when the data ends first, is damaged, or unpacks to more than `limit`.
+ */
+export function deflateEnd(data: Uint8Array, start: number, limit: number, slice = SLICE): number | null {
+  let total = 0
+  const stream = new Inflate((chunk) => {
+    total += chunk.length
+  })
+  const state = stream as unknown as InflateInternals
+  let pos = start
+  try {
+    while (pos < data.length) {
+      const end = Math.min(pos + slice, data.length)
+      stream.push(data.subarray(pos, end), false)
+      pos = end
+      if (state.s.f && !state.s.l) return pos - state.p.subarray(((state.s.p ?? 0) + 7) >> 3).length
+      if (total > limit) return null
+    }
+  } catch {
+    return null
+  }
+  return null
 }
 
 export type GzipHeader = {
@@ -110,10 +136,31 @@ export type GunzipResult = {
  * before the damage with `damaged` set; data with nothing readable throws `DamagedError`.
  * Throws `TooLargeError` past `limit`.
  */
+/**
+ * The size a gzip file unpacks to, from the ISIZE at its end, when that fits one member: DEFLATE
+ * output is at least its input less stored-block overhead and at most 1032 times it. Otherwise
+ * 0: several members (ISIZE is the last one's), trailing bytes, or 4 GiB or more (ISIZE wraps).
+ */
+export function singleMemberSize(data: Uint8Array): number {
+  if (data.length < 18) return 0
+  let start: number
+  try {
+    start = memberHeader(data, 0)
+  } catch {
+    return 0
+  }
+  const packed = data.length - start - 8
+  const size = u32(data, data.length - 4)
+  return packed > 0 && size + 64 >= packed - Math.ceil(packed / 8192) && size <= packed * 1032 + 64 ? size : 0
+}
+
 export function gunzip(data: Uint8Array, limit: number, slice = SLICE): GunzipResult {
-  // ISIZE of the last member: the whole size for the usual single-member file.
-  const hint = data.length >= 18 ? Math.min(u32(data, data.length - 4), data.length * 1032) : 0
-  const sink = new Sink(limit, false, hint)
+  return run(gunzipSteps(data, limit, slice))
+}
+
+/** gunzip in steps, one slice of input each. */
+export function* gunzipSteps(data: Uint8Array, limit: number, slice = SLICE): Steps<GunzipResult> {
+  const sink = new Sink(limit, false, singleMemberSize(data))
   let damaged = false
   let members = 0
   let at = 0
@@ -141,6 +188,7 @@ export function gunzip(data: Uint8Array, limit: number, slice = SLICE): GunzipRe
         const end = Math.min(pos + slice, data.length)
         stream.push(data.subarray(pos, end), false)
         pos = end
+        yield
         if (state.s.f && !state.s.l) {
           rest = state.p.subarray(((state.s.p ?? 0) + 7) >> 3)
           break

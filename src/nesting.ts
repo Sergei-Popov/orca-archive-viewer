@@ -29,10 +29,12 @@ export function nestedLimit(depth: number, held: number, maxLevels = MAX_LEVELS,
   return Math.max(0, Math.min(MAX_UNPACKED, maxHeld - held))
 }
 
-/** Bytes a nested level keeps: the entry it was read from, plus the stream it unpacked. */
+/**
+ * Bytes a nested level keeps: the entry it was read from, plus the whole buffer a compressed
+ * stream was unpacked into (which can be larger than the entries in it).
+ */
 export function heldBytes(archive: Archive, entryBytes: number): number {
-  const unpacked = archive.kind === 'single' || archive.format.includes('+')
-  return entryBytes + (unpacked ? archive.entries.reduce((sum, entry) => sum + entry.size, 0) : 0)
+  return entryBytes + archive.unpacked
 }
 
 /**

@@ -42,11 +42,15 @@ const en = {
   packed: 'Packed',
   ratio: 'Ratio',
   method: 'Method',
+  stored: 'Stored',
   modified: 'Modified',
   mode: 'Permissions',
   crc: 'CRC-32',
   link: 'Link to',
   hardLink: 'Hard link to',
+  duplicate: 'copy {n} of {count}',
+  duplicateLabel: 'Same name',
+  duplicateHint: 'Entry {n} of {count} with this name. ZIP readers differ on which one they use.',
   encoding: 'Encoding',
   dimensions: 'Dimensions',
   save: 'Save…',
@@ -83,7 +87,8 @@ const en = {
   features: {
     'zstd-window': 'It is Zstandard with a window over 128 MB, more than Archive Viewer unpacks in a tab.',
     'xz-dictionary': 'It is XZ with a dictionary over 64 MB, more than Archive Viewer unpacks.',
-    'xz-options': 'It is XZ with a SHA-256 check or a BCJ or delta filter, which Archive Viewer cannot unpack.'
+    'xz-options': 'It is XZ with a SHA-256 check or a BCJ or delta filter, which Archive Viewer cannot unpack.',
+    'tar-sparse': 'This is a sparse file whose map of holes Archive Viewer cannot read, so it is neither shown nor saved.'
   },
   units: { b: 'B', kb: 'KB', mb: 'MB', gb: 'GB' }
 }
@@ -120,11 +125,15 @@ const ru: Strings = {
   packed: 'Сжато',
   ratio: 'Степень сжатия',
   method: 'Метод',
+  stored: 'Без сжатия',
   modified: 'Изменён',
   mode: 'Права',
   crc: 'CRC-32',
   link: 'Ссылка на',
   hardLink: 'Жёсткая ссылка на',
+  duplicate: 'копия {n} из {count}',
+  duplicateLabel: 'То же имя',
+  duplicateHint: 'Запись {n} из {count} с этим именем. Программы для ZIP по-разному выбирают, какую из них взять.',
   encoding: 'Кодировка',
   dimensions: 'Размеры',
   save: 'Сохранить…',
@@ -161,7 +170,8 @@ const ru: Strings = {
   features: {
     'zstd-window': 'Это Zstandard с окном больше 128 МБ — больше, чем Archive Viewer распаковывает во вкладке.',
     'xz-dictionary': 'Это XZ со словарём больше 64 МБ — больше, чем распаковывает Archive Viewer.',
-    'xz-options': 'Это XZ с проверкой SHA-256 или фильтром BCJ или delta — такое Archive Viewer не распаковывает.'
+    'xz-options': 'Это XZ с проверкой SHA-256 или фильтром BCJ или delta — такое Archive Viewer не распаковывает.',
+    'tar-sparse': 'Это разреженный файл, карту пропусков которого Archive Viewer не может прочитать, поэтому он не показывается и не сохраняется.'
   },
   units: { b: 'Б', kb: 'КБ', mb: 'МБ', gb: 'ГБ' }
 }

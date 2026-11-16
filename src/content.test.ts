@@ -31,6 +31,10 @@ test('classify spots nested archives', () => {
   assert.equal(classify('inner.zip', zip([]), false, 'windows-1252').kind, 'archive')
   assert.equal(classify('a.txt', new TextEncoder().encode('text'), false, 'windows-1252').kind, 'text')
   assert.equal(classify('a.bin', bytes(0, 1, 2), false, 'windows-1252').kind, 'binary')
+  // A disk image starts with zeros, then its data: binary, not an empty tar.
+  const image = new Uint8Array(4096)
+  image[1080] = 0x53
+  assert.equal(classify('rootfs.ext4', image, false, 'windows-1252').kind, 'binary')
 })
 
 test('hexDump writes offset, hex and ASCII columns', () => {
@@ -50,4 +54,61 @@ test('nameKind picks the tree icon from the name', () => {
   assert.equal(nameKind('.gitignore'), 'text')
   assert.equal(nameKind('MANIFEST.MF'), 'text')
   assert.equal(nameKind('app.exe'), 'file')
+})
+
+test('7-Zip, RAR, lzip, compress and Cabinet files inside an archive are classed as unsupported archives', () => {
+  const cases: [string, number[], string][] = [
+    ['backup.7z', [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0, 4], '7-Zip'],
+    ['old.rar', [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 1, 0], 'RAR'],
+    ['logs.tar.lz', [0x4c, 0x5a, 0x49, 0x50, 1, 0x0c], 'lzip'],
+    ['README.md.Z', [0x1f, 0x9d, 0x90, 0x23], 'compress (.Z)'],
+    // CFHEADER: reserved, cbCabinet 64, reserved, coffFiles 44, reserved, version 1.3, 1 folder, 1 file
+    ['setup.cab', [0x4d, 0x53, 0x43, 0x46, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0, 3, 1, 1, 0, 1, 0], 'Cabinet (.cab)']
+  ]
+  for (const [name, start, format] of cases) {
+    const bytes = new Uint8Array(64)
+    bytes.set(start)
+    assert.deepEqual(classify(name, bytes, false, 'windows-1252'), { kind: 'unsupported', format }, name)
+    // By its bytes, not its name.
+    assert.deepEqual(classify('renamed.bin', bytes, false, 'windows-1252'), { kind: 'unsupported', format }, name)
+  }
+  assert.deepEqual(classify('notes.txt', new TextEncoder().encode('plain text'), false, 'windows-1252').kind, 'text')
+})
+
+test('text that starts with "LZIP" or "MSCF" is text, not an unsupported archive', () => {
+  const texts = [
+    'LZIP files start with the four letters LZIP and a version byte.\n',
+    'LZIP_OPTS=-9\nexport LZIP_OPTS\n',
+    'MSCF is the signature of a Microsoft Cabinet file.\n',
+    'MSCFLAGS = -O2 -Wall\nall: build\n',
+    'LZIP',
+    'MSCF'
+  ]
+  for (const content of texts) {
+    const bytes = new TextEncoder().encode(content)
+    const kind = classify('notes.txt', bytes, false, 'windows-1252')
+    assert.equal(kind.kind, 'text', content)
+    assert.equal(kind.kind === 'text' && kind.decoded.text, content)
+  }
+  // Almost a header: an lzip version other than 1 or a dictionary size out of range, and a
+  // Cabinet header with a reserved field set or another format version.
+  const near: number[][] = [
+    [0x4c, 0x5a, 0x49, 0x50, 0, 0x0c],
+    [0x4c, 0x5a, 0x49, 0x50, 1, 0x0b],
+    [0x4c, 0x5a, 0x49, 0x50, 1, 0x1e],
+    [0x4c, 0x5a, 0x49, 0x50, 1, 0x2c],
+    [0x4d, 0x53, 0x43, 0x46, 1, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0, 3, 1],
+    [0x4d, 0x53, 0x43, 0x46, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 44, 0, 0, 0, 0, 0, 0, 0, 3, 2]
+  ]
+  for (const start of near) {
+    const bytes = new Uint8Array(64)
+    bytes.set(start)
+    assert.equal(classify('x.bin', bytes, false, 'windows-1252').kind, 'binary', start.join(','))
+  }
+  // A dictionary of 2^13 less 7/16 and the largest, 2^29, are valid.
+  for (const ds of [0xed, 0x1d]) {
+    const bytes = new Uint8Array(64)
+    bytes.set([0x4c, 0x5a, 0x49, 0x50, 1, ds])
+    assert.equal(classify('x.lz', bytes, false, 'windows-1252').kind, 'unsupported', ds.toString(16))
+  }
 })
