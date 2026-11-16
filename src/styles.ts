@@ -164,6 +164,7 @@ button, select, input { font: inherit; color: inherit; }
 .av-name { overflow: hidden; text-overflow: ellipsis; }
 .av-name mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inherit; border-radius: 2px; }
 .av-target { color: var(--muted-fg); margin-left: 6px; }
+.av-dup { color: var(--warn); margin-left: 6px; font-size: 11px; }
 .av-cell { color: var(--muted-fg); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .av-dir .av-cell { opacity: .8; }
 .av-empty { padding: 24px 16px; color: var(--muted-fg); text-align: center; }

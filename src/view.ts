@@ -21,6 +21,7 @@ import {
   findNode,
   folderPaths,
   renamedPaths,
+  shownPath,
   visibleRows
 } from './tree'
 
@@ -286,7 +287,8 @@ export class ArchiveView {
   }
 
   private newLevel(archive: Archive, label: string, fresh: boolean): Level {
-    const root = buildTree(archive.entries)
+    // A ZIP can list a name twice, and readers differ on which copy wins: show every copy.
+    const root = buildTree(archive.entries, { duplicates: archive.kind === 'zip' })
     const level: Level = {
       archive,
       label,
@@ -462,6 +464,10 @@ export class ArchiveView {
     const [kind, kindClass] = this.kindIcon(node)
     const name = h('span', { className: 'av-name' }, highlight(node.name, level.filter))
     if (node.entry?.link) append(name, h('span', { className: 'av-target' }, `→ ${node.entry.link.target}`))
+    if (node.duplicate) {
+      const { copy, copies } = node.duplicate
+      append(name, h('span', { className: 'av-dup' }, fill(this.t.duplicate, { n: String(copy), count: String(copies) })))
+    }
     const packedKnown = node.dir ? node.hasPacked && node.files > 0 : node.entry?.packed !== undefined
     const row = h(
       'div',
@@ -472,7 +478,7 @@ export class ArchiveView {
         'aria-selected': node.path === level.selected ? 'true' : 'false',
         'aria-expanded': node.dir ? String(open) : undefined,
         'data-index': index,
-        title: node.path
+        title: shownPath(node)
       },
       h('span', { className: 'av-twisty', 'data-open': String(open) }, node.dir && node.children.length ? svg(icon('chevron')) : null),
       h('span', { className: `av-kind ${kindClass}` }, svg(icon(kind))),
@@ -792,7 +798,7 @@ export class ArchiveView {
       'header',
       { className: 'av-head' },
       h('div', { className: 'av-title' }, svg(icon(iconName, iconClass)), h('h2', { title: node.name }, node.name)),
-      node.path.includes('/') ? h('div', { className: 'av-path' }, node.path) : null,
+      shownPath(node).includes('/') ? h('div', { className: 'av-path' }, shownPath(node)) : null,
       list,
       actions
     )
@@ -824,7 +830,7 @@ export class ArchiveView {
     }
     add(t.modified, formatDate(node.mtime, this.locale))
     if (node.entry?.mode !== undefined) add(t.mode, this.mode(node.entry.mode), { mono: true })
-    const actions = h('div', { className: 'av-actions' }, this.copyButton(node.path))
+    const actions = h('div', { className: 'av-actions' }, this.copyButton(shownPath(node)))
     return this.head(node, 'folder', 'av-folder', list, actions)
   }
 
@@ -847,6 +853,10 @@ export class ArchiveView {
     if (entry.mode !== undefined) add(t.mode, this.mode(entry.mode), { mono: true })
     if (entry.crc !== undefined && level.archive.kind === 'zip') add(t.crc, formatCrc(entry.crc), { mono: true })
     if (entry.link) add(entry.link.hard ? t.hardLink : t.link, entry.link.target, { mono: true })
+    if (node.duplicate) {
+      const { copy, copies } = node.duplicate
+      add(t.duplicateLabel, fill(t.duplicateHint, { n: String(copy), count: String(copies) }))
+    }
 
     const actions = h('div', { className: 'av-actions' })
     const symlink = !!entry.link && !entry.link.hard
@@ -857,7 +867,7 @@ export class ArchiveView {
       save.addEventListener('click', () => this.save(node, entry))
       actions.append(save)
     }
-    actions.append(this.copyButton(node.path))
+    actions.append(this.copyButton(shownPath(node)))
 
     const body = h('div', { className: 'av-body' })
     this.body = body

@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
 import type { Entry } from './archive/model'
-import { FOLDER_BUDGET, ancestors, buildTree, findNode, folderPaths, renamedPaths, visibleRows } from './tree'
+import { FOLDER_BUDGET, ancestors, buildTree, findNode, folderPaths, renamedPaths, shownPath, visibleRows } from './tree'
 
 const file = (index: number, path: string, size: number, packed?: number): Entry => ({ index, path, dir: false, size, packed })
 
@@ -127,4 +127,34 @@ test('folder paths stay within their budget, whatever the engine shares', () => 
   const last = findNode(root, many[299].path)!
   assert.ok(last.name.endsWith('/f.txt') || last.name === many[299].path, last.name.slice(0, 40))
   assert.equal(findNode(root, many[300].path)?.dir, true)
+})
+
+test('a ZIP name listed twice gives each copy its own marked row; a tar keeps the last', () => {
+  const twice: Entry[] = [
+    file(0, 'a.txt', 1),
+    file(1, 'dir/dup.txt', 10),
+    file(2, 'b/c.txt', 1),
+    file(3, 'dir/dup.txt', 11),
+    file(4, 'dir/dup.txt', 12)
+  ]
+  const zipTree = buildTree(twice, { duplicates: true })
+  assert.equal(zipTree.files, 5)
+  const dir = findNode(zipTree, 'dir')!
+  assert.deepEqual(dir.children.map((n) => [n.name, n.entry?.index, n.duplicate]), [
+    ['dup.txt', 1, { copy: 1, copies: 3 }],
+    ['dup.txt', 3, { copy: 2, copies: 3 }],
+    ['dup.txt', 4, { copy: 3, copies: 3 }]
+  ])
+  // Rows are told apart by path; every copy shows and copies the name the archive gives it.
+  const paths = dir.children.map((n) => n.path)
+  assert.equal(new Set(paths).size, 3)
+  assert.deepEqual(dir.children.map(shownPath), ['dir/dup.txt', 'dir/dup.txt', 'dir/dup.txt'])
+  for (const node of dir.children) assert.equal(findNode(zipTree, node.path), node)
+  assert.deepEqual(ancestors(paths[2]), ['dir'])
+  assert.equal(visibleRows(zipTree, new Set(), 'dup').length, 4)
+  assert.equal(findNode(zipTree, 'a.txt')?.duplicate, undefined)
+  // An appended tar: the later copy replaces the earlier one.
+  const tarTree = buildTree(twice)
+  assert.equal(tarTree.files, 3)
+  assert.deepEqual(findNode(tarTree, 'dir')!.children.map((n) => [n.entry?.index, n.duplicate]), [[4, undefined]])
 })

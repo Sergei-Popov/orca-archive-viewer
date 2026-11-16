@@ -21,6 +21,16 @@ export type Node = {
   hasPacked: boolean
   /** The root only: FOLDER_BUDGET ran out, so some entries hang under a folder above their own. */
   cut?: boolean
+  /** A ZIP file whose name other entries share: which copy this is, counting from 1. */
+  duplicate?: { copy: number; copies: number }
+}
+
+/**
+ * The path to show for a node. It is `node.path` except for the second and later copies of a
+ * ZIP name, whose `path` adds a NUL and the entry index to tell their rows apart.
+ */
+export function shownPath(node: Node): string {
+  return node.entry?.path ?? node.path
 }
 
 export type Row = { node: Node; depth: number }
@@ -41,7 +51,11 @@ function folder(name: string, path: string): Node {
   return { name, path, dir: true, children: [], size: 0, packed: 0, files: 0, folders: 0, hasPacked: true }
 }
 
-export function buildTree(entries: readonly Entry[]): Node {
+/**
+ * The tree of `entries`. A later file at the same path replaces the earlier one (an appended
+ * tar), unless `duplicates` is set (ZIP): then every copy is a row of its own, marked.
+ */
+export function buildTree(entries: readonly Entry[], options: { duplicates?: boolean } = {}): Node {
   const root = folder('', '')
   // Subfolders by name. Archives can nest folders hundreds deep, so none of the walks here
   // recurse, and the walk down goes by name so that only a new folder copies its path.
@@ -75,6 +89,7 @@ export function buildTree(entries: readonly Entry[]): Node {
   /** `path` below `parent`: one name, or after the budget ran out, the rest of the path. */
   const rest = (parent: Node, path: string): string => path.slice(parent.path ? parent.path.length + 1 : 0)
   const files = new Map<string, Node>()
+  const repeats = new Map<string, Node[]>()
   for (const entry of entries) {
     if (!entry.path) continue
     if (entry.dir) {
@@ -92,6 +107,14 @@ export function buildTree(entries: readonly Entry[]): Node {
     const slash = entry.path.lastIndexOf('/')
     const parent = ensure(slash < 0 ? '' : entry.path.slice(0, slash))
     const existing = files.get(entry.path)
+    if (existing && options.duplicates) {
+      const copies = repeats.get(entry.path) ?? [existing]
+      repeats.set(entry.path, copies)
+      const node = fileNode(entry, rest(parent, entry.path), `${entry.path}\0${entry.index}`)
+      copies.push(node)
+      parent.children.push(node)
+      continue
+    }
     if (existing) {
       // A later copy of the same path (an appended tar) replaces the earlier one.
       existing.entry = entry
@@ -101,24 +124,31 @@ export function buildTree(entries: readonly Entry[]): Node {
       existing.mtime = entry.mtime
       continue
     }
-    const node: Node = {
-      name: rest(parent, entry.path),
-      path: entry.path,
-      dir: false,
-      entry,
-      children: [],
-      size: entry.size,
-      packed: entry.packed ?? 0,
-      files: 1,
-      folders: 0,
-      mtime: entry.mtime,
-      hasPacked: entry.packed !== undefined
-    }
+    const node = fileNode(entry, rest(parent, entry.path), entry.path)
     parent.children.push(node)
     files.set(entry.path, node)
   }
+  for (const copies of repeats.values()) {
+    copies.forEach((node, i) => (node.duplicate = { copy: i + 1, copies: copies.length }))
+  }
   total(root)
   return root
+}
+
+function fileNode(entry: Entry, name: string, path: string): Node {
+  return {
+    name,
+    path,
+    dir: false,
+    entry,
+    children: [],
+    size: entry.size,
+    packed: entry.packed ?? 0,
+    files: 1,
+    folders: 0,
+    mtime: entry.mtime,
+    hasPacked: entry.packed !== undefined
+  }
 }
 
 /** Sums sizes and counts into every folder and sorts its children. */
@@ -219,9 +249,9 @@ export function findNode(root: Node, path: string): Node | null {
       node = next
       continue
     }
-    // A tree past its folder budget names some entries by the rest of their path.
-    const tail = parts.slice(i).join('/')
-    return node.children.find((child) => child.path === path && child.name === tail) ?? null
+    // A tree past its folder budget names some entries by the rest of their path, and a repeated
+    // ZIP name's later copies have a path of their own.
+    return node.children.find((child) => child.path === path) ?? null
   }
   return node
 }

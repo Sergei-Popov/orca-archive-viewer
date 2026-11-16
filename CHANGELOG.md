@@ -39,6 +39,9 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- A name a ZIP lists more than once shows every copy as its own row, marked "copy 1 of 2"
+  and so on, instead of only the last: ZIP readers differ on which copy they use. An appended
+  tar still shows the last copy, as tar extracts it.
 - Very deep paths no longer crash the tab: a name is cut at 1,024 folders or 4,096 characters
   and the archive marked damaged (a 313-byte .tar.gz with one path 70,000 folders deep ran the
   frame out of memory), the tree finds folders by name instead of by whole path, and all folder
