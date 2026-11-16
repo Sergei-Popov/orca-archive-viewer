@@ -39,6 +39,31 @@ export function inflate(
   return { bytes, truncated: false }
 }
 
+/**
+ * Where the raw DEFLATE stream that starts at `start` ends, found by inflating it with the output
+ * thrown away; null when the data ends first, is damaged, or unpacks to more than `limit`.
+ */
+export function deflateEnd(data: Uint8Array, start: number, limit: number, slice = SLICE): number | null {
+  let total = 0
+  const stream = new Inflate((chunk) => {
+    total += chunk.length
+  })
+  const state = stream as unknown as InflateInternals
+  let pos = start
+  try {
+    while (pos < data.length) {
+      const end = Math.min(pos + slice, data.length)
+      stream.push(data.subarray(pos, end), false)
+      pos = end
+      if (state.s.f && !state.s.l) return pos - state.p.subarray(((state.s.p ?? 0) + 7) >> 3).length
+      if (total > limit) return null
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 export type GzipHeader = {
   /** FNAME bytes, without the terminating zero. */
   name: Uint8Array | null

@@ -46,8 +46,10 @@ unpacked.
   filter only: no SHA-256 check, no BCJ (`--x86`, `--arm64`…) or delta filters.
 
 A damaged or cut-off archive shows what could be read with a notice: the entries before the
-damage, or for a `.gz` of one file, the part of it before the damage (GZIP CRC-32 and size
-are checked). A ZIP entry that unpacks to more than the size its archive records is damaged.
+damage, or for a `.gz`, `.bz2`, `.xz` or `.zst` of one file, the part of it before the damage
+(GZIP CRC-32 and size, bzip2 block CRCs and XZ checks are checked). A ZIP cut off before its
+central directory is read from the local headers in front of the cut. A ZIP entry that unpacks
+to more than the size its archive records is damaged.
 
 ## Keyboard
 

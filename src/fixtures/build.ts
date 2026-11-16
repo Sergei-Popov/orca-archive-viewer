@@ -61,6 +61,9 @@ export type ZipItem = {
   crc?: number
   /** Store this uncompressed size instead of the real one. */
   size?: number
+  /** Leave CRC and sizes out of the local header and write a data descriptor after the data,
+   *  with or without its optional signature. */
+  descriptor?: 'signed' | 'bare'
 }
 
 export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: string; zip64End?: boolean } = {}): Uint8Array {
@@ -78,19 +81,26 @@ export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: 
     const size = item.size ?? data.length
     const offset = w.length - base
     const extra = item.extra ?? new Uint8Array(0)
+    const flags = (item.flags ?? 0) | (item.descriptor ? 8 : 0)
     w.u32(0x04034b50)
     w.u16(20)
-    w.u16(item.flags ?? 0)
+    w.u16(flags)
     w.u16(method)
     w.u16(item.time ?? 0)
     w.u16(item.date ?? 0x5b21)
-    w.u32(crc)
-    w.u32(packed.length)
-    w.u32(size)
+    w.u32(item.descriptor ? 0 : crc)
+    w.u32(item.descriptor ? 0 : packed.length)
+    w.u32(item.descriptor ? 0 : size)
     w.u16(name.length)
     w.u16(0)
     w.raw(name)
     w.raw(packed)
+    if (item.descriptor) {
+      if (item.descriptor === 'signed') w.u32(0x08074b50)
+      w.u32(crc)
+      w.u32(packed.length)
+      w.u32(size)
+    }
 
     const c = new Writer()
     let zip64Extra = new Uint8Array(0)
@@ -106,7 +116,7 @@ export function zip(items: ZipItem[], options: { prefix?: Uint8Array; comment?: 
     c.u32(0x02014b50)
     c.u16(((item.host ?? 3) << 8) | 20)
     c.u16(20)
-    c.u16(item.flags ?? 0)
+    c.u16(flags)
     c.u16(method)
     c.u16(item.time ?? 0)
     c.u16(item.date ?? 0x5b21)

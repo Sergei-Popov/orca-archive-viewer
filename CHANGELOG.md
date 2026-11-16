@@ -39,6 +39,9 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- A ZIP cut off before its end record (a partial download) lists the entries in front of the
+  cut from their local headers, data descriptors included, with the damage notice; the central
+  records that survive the cut still give modes and links.
 - A `.zst` or `.tar.zst` frame that records a content size over 256 MB (what `zstd file.tar`
   writes) opens instead of being called damaged, and smaller ones open several times faster:
   fzstd compared its output buffer with `== 1`, which turned the buffer into a string.

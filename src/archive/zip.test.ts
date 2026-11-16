@@ -1,5 +1,6 @@
 import { assert, test } from 'orca/testing'
 import { concat, utf8, zip } from '../fixtures/build'
+import { DamagedError } from '../codecs/sink'
 import { EntryError } from './model'
 import { decodeLegacy } from './names'
 import { dosTime, parseZip } from './zip'
@@ -162,4 +163,53 @@ test('a Zstandard entry with a window too large to unpack is unsupported, not da
     () => archive.read(archive.entries[0], 1024),
     (e: unknown) => e instanceof EntryError && e.code === 'unsupported' && e.detail === 'zstd-window'
   )
+})
+
+test('a ZIP cut off before its end record is read from its local headers, marked damaged', () => {
+  const items = Array.from({ length: 50 }, (_, i) => ({
+    name: `dir/file${i}.txt`,
+    data: utf8(`line ${i}\n`.repeat(200 + i)),
+    method: 8 as const,
+    descriptor: i % 3 === 0 ? ('signed' as const) : i % 3 === 1 ? undefined : ('bare' as const)
+  }))
+  const whole = zip(items)
+  for (const cut of [Math.floor(whole.length / 2), Math.floor(whole.length * 0.2)]) {
+    const archive = parseZip(whole.subarray(0, cut), 'cp437')
+    assert.equal(archive.damaged, true)
+    const n = archive.entries.length
+    assert.ok(n > 3 && n < 50, `${n} entries at ${cut}`)
+    assert.deepEqual(archive.entries.map((e) => e.path), items.slice(0, n).map((item) => item.name))
+    // The last listed entry can be the one cut through: listed, and damaged when read.
+    for (const entry of archive.entries.slice(0, n - 1)) {
+      const read = archive.read(entry, 1 << 20)
+      assert.equal(read.crcOk, true, entry.path)
+      assert.deepEqual(read.bytes, items[entry.index].data, entry.path)
+      assert.equal(entry.size, items[entry.index].data.length, entry.path)
+    }
+  }
+})
+
+test('a ZIP cut inside its central directory uses the records it has, and one cut in a header is refused', () => {
+  const whole = zip([
+    { name: 'a.txt', data: utf8('aaaa') },
+    { name: 'link', data: utf8('a.txt'), external: (0o120777 << 16) >>> 0 },
+    { name: 'b.txt', data: utf8('bbbb'), descriptor: 'signed' }
+  ])
+  // Cut the end record off, then also the last central record: the local scan reaches the
+  // central directory and takes the records it still has.
+  for (const cut of [10, 22 + 20]) {
+    const archive = parseZip(whole.subarray(0, whole.length - cut), 'cp437')
+    assert.equal(archive.damaged, true)
+    assert.deepEqual(archive.entries.map((e) => e.path), ['a.txt', 'link', 'b.txt'])
+    assert.deepEqual(archive.entries[1].link, { target: 'a.txt', hard: false })
+    assert.equal(text(archive.read(archive.entries[2], 100).bytes), 'bbbb')
+    assert.equal(archive.read(archive.entries[2], 100).crcOk, true)
+  }
+  // A local header cut before its name ends lists nothing, so it is an error.
+  assert.throws(() => parseZip(whole.subarray(0, 32), 'cp437'), (e: unknown) => e instanceof DamagedError)
+  // An entry cut through its data with the size in its header is listed and damaged when read.
+  const big = zip([{ name: 'big.bin', data: new Uint8Array(5000).fill(7) }])
+  const cut = parseZip(big.subarray(0, 2000), 'cp437')
+  assert.deepEqual(cut.entries.map((e) => [e.path, e.size]), [['big.bin', 5000]])
+  assert.throws(() => cut.read(cut.entries[0], 1 << 20), (e: unknown) => e instanceof EntryError && e.code === 'damaged')
 })
