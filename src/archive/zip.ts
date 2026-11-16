@@ -104,7 +104,12 @@ export function parseZip(bytes: Uint8Array, encoding: LegacyEncoding): Archive {
   return build(bytes, raws, shift, encoding, commentBytes, damaged, new Map())
 }
 
-/** The central directory records from `at` on, while they last. */
+/**
+ * The central directory records from `at` on, while they last. A record whose name, extra field
+ * or comment runs past the end of the data (a ZIP cut inside its central directory) ends the walk:
+ * read anyway, it would give a name cut short, or a file turned into a folder by a cut after a
+ * `/`, in place of the whole local header.
+ */
 function centralRecords(bytes: Uint8Array, at: number): Raw[] {
   const raws: Raw[] = []
   // Walk the records while they last: some writers wrap the 16-bit entry count past 65 535.
@@ -123,9 +128,10 @@ function centralRecords(bytes: Uint8Array, at: number): Raw[] {
     const entryCommentLength = u16(bytes, at + 32)
     const external = u32(bytes, at + 38)
     let localOffset = u32(bytes, at + 42)
+    if (at + 46 + nameLength + extraLength + entryCommentLength > bytes.length) break
     const nameBytes = bytes.subarray(at + 46, at + 46 + nameLength)
     const extraStart = at + 46 + nameLength
-    const extraEnd = Math.min(bytes.length, extraStart + extraLength)
+    const extraEnd = extraStart + extraLength
 
     const extra = readExtra(bytes, extraStart, extraEnd, nameBytes, { size, packed, localOffset })
     size = extra.size

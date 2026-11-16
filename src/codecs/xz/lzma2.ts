@@ -1,6 +1,8 @@
 // LZMA2 and LZMA decoding, ported to TypeScript from XZ Embedded's xz_dec_lzma2.c and
 // xz_lzma2.h (version and changes in stream.ts). The range decoder, the probability model and
 // the LZMA2 chunk layer follow the C code step by step, with its names. What differs:
+// - The range decoder's functions and the LZMA symbol decoders are written out inside lzmaMain,
+//   with their state in locals, each part named after its C function (see there).
 // - The whole input is in memory, so there is no temporary input buffer between calls: a chunk
 //   is decoded from the input directly, and a cut chunk stops where the C code would wait for
 //   input that never comes (LZMA_IN_REQUIRED bytes before the end of the data).
@@ -132,7 +134,7 @@ export class Lzma2Decoder {
   private dictStart = 0
   private dictSize = 0
 
-  // struct rc_dec
+  // struct rc_dec; range and code as int32 bit patterns (see lzmaMain)
   private range = 0
   private code = 0
   private input: Uint8Array = new Uint8Array(0)
@@ -233,9 +235,9 @@ export class Lzma2Decoder {
     // rc_read_init: the first five bytes. The first is always zero: XZ Embedded ignores it, and
     // here it is checked as liblzma (xz -d) does.
     if (data[at] !== 0) throw new DamagedError('xz LZMA chunk does not start with a zero byte')
-    this.range = 0xffffffff
+    this.range = 0xffffffff | 0
     this.code = 0
-    for (let i = 0; i < RC_INIT_BYTES; i++) this.code = ((this.code << 8) | data[at + i]) >>> 0
+    for (let i = 0; i < RC_INIT_BYTES; i++) this.code = (this.code << 8) | data[at + i]
     this.input = data
     this.inPos = at + RC_INIT_BYTES
     const want = this.out.room(uncompressed)
@@ -255,215 +257,407 @@ export class Lzma2Decoder {
     return end
   }
 
-  // Range decoder
-
-  /** rc_normalize: reads the next input byte if needed. Past the end of the data it reads 0. */
-  private normalize(): void {
-    if (this.range < RC_TOP_VALUE) {
-      this.range = (this.range << 8) >>> 0
-      this.code = ((this.code << 8) | this.input[this.inPos++]) >>> 0
-    }
-  }
-
-  /** rc_bit: decodes one bit with the probability at `i` and adapts it. */
-  private bit(i: number): number {
-    this.normalize()
-    const prob = this.probs[i]
-    const bound = (this.range >>> RC_BIT_MODEL_TOTAL_BITS) * prob
-    if (this.code < bound) {
-      this.range = bound
-      this.probs[i] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
-      return 0
-    }
-    this.range = (this.range - bound) >>> 0
-    this.code = (this.code - bound) >>> 0
-    this.probs[i] = prob - (prob >>> RC_MOVE_BITS)
-    return 1
-  }
-
-  /** rc_bittree: a bittree from the most significant bit; returns symbol + limit. */
-  private bittree(probs: number, limit: number): number {
-    let symbol = 1
-    do {
-      symbol = (symbol << 1) | this.bit(probs + symbol)
-    } while (symbol < limit)
-    return symbol
-  }
-
-  /** rc_bittree_reverse: `limit` bits from the least significant one. */
-  private bittreeReverse(probs: number, limit: number): number {
-    let symbol = 1
-    let value = 0
-    for (let i = 0; i < limit; i++) {
-      const bit = this.bit(probs + symbol)
-      symbol = (symbol << 1) | bit
-      value |= bit << i
-    }
-    return value
-  }
-
-  /** rc_direct: `limit` bits of fixed fifty-fifty probability, appended to `dest`. */
-  private direct(dest: number, limit: number): number {
-    do {
-      this.normalize()
-      this.range >>>= 1
-      this.code = (this.code - this.range) >>> 0
-      const mask = this.code >>> 31 ? 0xffffffff : 0
-      this.code = (this.code + (this.range & mask)) >>> 0
-      dest = ((dest << 1) + (mask ? 0 : 1)) >>> 0
-    } while (--limit > 0)
-    return dest
-  }
-
-  // LZMA
+  // LZMA. The range decoder (rc_normalize, rc_bit, rc_bittree, rc_bittree_reverse, rc_direct)
+  // and lzma_literal, lzma_len, lzma_match, lzma_rep_match and dict_repeat are written out inside
+  // lzmaMain: nearly all of the time goes there, and keeping the range, the code, the input and
+  // output positions and the LZMA state in locals instead of fields, with no calls per bit, makes
+  // it two to three times as fast. Each written-out rc_bit is the same steps:
+  //   rc_normalize:  if range < RC_TOP_VALUE: range <<= 8, code = code << 8 | next input byte
+  //   bound = (range >>> RC_BIT_MODEL_TOTAL_BITS) * prob
+  //   code < bound:  range = bound, prob += (RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS, bit 0
+  //   else:          range -= bound, code -= bound, prob -= prob >>> RC_MOVE_BITS, bit 1
+  // `range` and `code` are kept as int32 bit patterns and compared unsigned (`>>> 0`). Past the end
+  // of the data the next input byte reads as 0 (`code << 8 | undefined`).
 
   /** lzma_main: decodes symbols until the output reaches `target` or the input passes `limit`. */
   private lzmaMain(target: number, limit: number): void {
-    const out = this.out
-    while (out.pos < target && this.inPos <= limit) {
-      const posState = (out.pos - this.dictStart) & this.posMask
-      if (!this.bit(IS_MATCH + this.state * POS_STATES_MAX + posState)) {
-        this.literal()
+    const probs = this.probs
+    const input = this.input
+    const buf = this.out.buf
+    const dictStart = this.dictStart
+    const dictSize = this.dictSize
+    const posMask = this.posMask
+    const lc = this.lc
+    const literalPosMask = this.literalPosMask
+    let range = this.range | 0
+    let code = this.code | 0
+    let inPos = this.inPos
+    let pos = this.out.pos
+    let state = this.state
+    let rep0 = this.rep0
+    let rep1 = this.rep1
+    let rep2 = this.rep2
+    let rep3 = this.rep3
+    let len = this.len
+    let p = 0
+    let prob = 0
+    let bound = 0
+    let symbol = 0
+    let invalid = false
+    while (pos < target && inPos <= limit) {
+      const posState = (pos - dictStart) & posMask
+
+      // rc_bit(is_match[state][pos_state])
+      p = IS_MATCH + state * POS_STATES_MAX + posState
+      if ((range & 0xff000000) === 0) {
+        range <<= 8
+        code = (code << 8) | input[inPos++]
+      }
+      prob = probs[p]
+      bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+      if (code >>> 0 < bound >>> 0) {
+        range = bound
+        probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+
+        // lzma_literal: one 8-bit byte, matched against the byte at rep0 after a match.
+        const prevByte = pos > dictStart ? buf[pos - 1] : 0
+        const coder = LITERAL + LITERAL_CODER_SIZE * ((prevByte >> (8 - lc)) + (((pos - dictStart) & literalPosMask) << lc))
+        symbol = 1
+        if (state < LIT_STATES) {
+          // rc_bittree(probs, 0x100)
+          do {
+            p = coder + symbol
+            if ((range & 0xff000000) === 0) {
+              range <<= 8
+              code = (code << 8) | input[inPos++]
+            }
+            prob = probs[p]
+            bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+            if (code >>> 0 < bound >>> 0) {
+              range = bound
+              probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+              symbol <<= 1
+            } else {
+              range = (range - bound) | 0
+              code = (code - bound) | 0
+              probs[p] = prob - (prob >>> RC_MOVE_BITS)
+              symbol = (symbol << 1) | 1
+            }
+          } while (symbol < 0x100)
+        } else {
+          let matchByte = (pos > dictStart ? buf[pos - rep0 - 1] : 0) << 1
+          let offset = 0x100
+          do {
+            const matchBit = matchByte & offset
+            matchByte <<= 1
+            p = coder + offset + matchBit + symbol
+            if ((range & 0xff000000) === 0) {
+              range <<= 8
+              code = (code << 8) | input[inPos++]
+            }
+            prob = probs[p]
+            bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+            if (code >>> 0 < bound >>> 0) {
+              range = bound
+              probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+              symbol <<= 1
+              offset &= ~matchBit
+            } else {
+              range = (range - bound) | 0
+              code = (code - bound) | 0
+              probs[p] = prob - (prob >>> RC_MOVE_BITS)
+              symbol = (symbol << 1) + 1
+              offset &= matchBit
+            }
+          } while (symbol < 0x100)
+        }
+        buf[pos++] = symbol & 0xff
+        // lzma_state_literal
+        if (state <= STATE_SHORTREP_LIT_LIT) state = STATE_LIT_LIT
+        else if (state <= STATE_LIT_SHORTREP) state -= 3
+        else state -= 6
+        continue
+      }
+      range = (range - bound) | 0
+      code = (code - bound) | 0
+      probs[p] = prob - (prob >>> RC_MOVE_BITS)
+
+      // The length decoder to use: MATCH_LEN_DEC for a new distance, REP_LEN_DEC for a repeated
+      // one, -1 for a short rep (length 1).
+      let dec = MATCH_LEN_DEC
+      // rc_bit(is_rep[state])
+      p = IS_REP + state
+      if ((range & 0xff000000) === 0) {
+        range <<= 8
+        code = (code << 8) | input[inPos++]
+      }
+      prob = probs[p]
+      bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+      if (code >>> 0 < bound >>> 0) {
+        range = bound
+        probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+        // lzma_match: a match with a new distance, into rep0 (after its length, below).
+        state = state < LIT_STATES ? STATE_LIT_MATCH : STATE_NONLIT_MATCH
+        rep3 = rep2
+        rep2 = rep1
+        rep1 = rep0
       } else {
-        if (this.bit(IS_REP + this.state)) this.repMatch(posState)
-        else this.match(posState)
-        if (!this.repeat(target)) throw new DamagedError('xz match reaches before the start of the dictionary')
+        range = (range - bound) | 0
+        code = (code - bound) | 0
+        probs[p] = prob - (prob >>> RC_MOVE_BITS)
+        // lzma_rep_match: a match at one of the four latest distances, moved to rep0.
+        dec = REP_LEN_DEC
+        // rc_bit(is_rep0[state])
+        p = IS_REP0 + state
+        if ((range & 0xff000000) === 0) {
+          range <<= 8
+          code = (code << 8) | input[inPos++]
+        }
+        prob = probs[p]
+        bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+        if (code >>> 0 < bound >>> 0) {
+          range = bound
+          probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+          // rc_bit(is_rep0_long[state][pos_state])
+          p = IS_REP0_LONG + state * POS_STATES_MAX + posState
+          if ((range & 0xff000000) === 0) {
+            range <<= 8
+            code = (code << 8) | input[inPos++]
+          }
+          prob = probs[p]
+          bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+          if (code >>> 0 < bound >>> 0) {
+            range = bound
+            probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+            state = state < LIT_STATES ? STATE_LIT_SHORTREP : STATE_NONLIT_REP
+            len = 1
+            dec = -1
+          } else {
+            range = (range - bound) | 0
+            code = (code - bound) | 0
+            probs[p] = prob - (prob >>> RC_MOVE_BITS)
+          }
+        } else {
+          range = (range - bound) | 0
+          code = (code - bound) | 0
+          probs[p] = prob - (prob >>> RC_MOVE_BITS)
+          let tmp: number
+          // rc_bit(is_rep1[state])
+          p = IS_REP1 + state
+          if ((range & 0xff000000) === 0) {
+            range <<= 8
+            code = (code << 8) | input[inPos++]
+          }
+          prob = probs[p]
+          bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+          if (code >>> 0 < bound >>> 0) {
+            range = bound
+            probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+            tmp = rep1
+          } else {
+            range = (range - bound) | 0
+            code = (code - bound) | 0
+            probs[p] = prob - (prob >>> RC_MOVE_BITS)
+            // rc_bit(is_rep2[state])
+            p = IS_REP2 + state
+            if ((range & 0xff000000) === 0) {
+              range <<= 8
+              code = (code << 8) | input[inPos++]
+            }
+            prob = probs[p]
+            bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+            if (code >>> 0 < bound >>> 0) {
+              range = bound
+              probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+              tmp = rep2
+            } else {
+              range = (range - bound) | 0
+              code = (code - bound) | 0
+              probs[p] = prob - (prob >>> RC_MOVE_BITS)
+              tmp = rep3
+              rep3 = rep2
+            }
+            rep2 = rep1
+          }
+          rep1 = rep0
+          rep0 = tmp
+        }
+        if (dec >= 0) state = state < LIT_STATES ? STATE_LIT_LONGREP : STATE_NONLIT_REP
+      }
+
+      if (dec >= 0) {
+        // lzma_len: the match length into `len`.
+        let lengths: number
+        let symbols: number
+        // rc_bit(choice)
+        p = dec + LEN_CHOICE
+        if ((range & 0xff000000) === 0) {
+          range <<= 8
+          code = (code << 8) | input[inPos++]
+        }
+        prob = probs[p]
+        bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+        if (code >>> 0 < bound >>> 0) {
+          range = bound
+          probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+          lengths = dec + LEN_LOW + posState * LEN_LOW_SYMBOLS
+          symbols = LEN_LOW_SYMBOLS
+          len = MATCH_LEN_MIN
+        } else {
+          range = (range - bound) | 0
+          code = (code - bound) | 0
+          probs[p] = prob - (prob >>> RC_MOVE_BITS)
+          // rc_bit(choice2)
+          p = dec + LEN_CHOICE2
+          if ((range & 0xff000000) === 0) {
+            range <<= 8
+            code = (code << 8) | input[inPos++]
+          }
+          prob = probs[p]
+          bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+          if (code >>> 0 < bound >>> 0) {
+            range = bound
+            probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+            lengths = dec + LEN_MID + posState * LEN_MID_SYMBOLS
+            symbols = LEN_MID_SYMBOLS
+            len = MATCH_LEN_MIN + LEN_LOW_SYMBOLS
+          } else {
+            range = (range - bound) | 0
+            code = (code - bound) | 0
+            probs[p] = prob - (prob >>> RC_MOVE_BITS)
+            lengths = dec + LEN_HIGH
+            symbols = LEN_HIGH_SYMBOLS
+            len = MATCH_LEN_MIN + LEN_LOW_SYMBOLS + LEN_MID_SYMBOLS
+          }
+        }
+        // rc_bittree(lengths, symbols)
+        symbol = 1
+        do {
+          p = lengths + symbol
+          if ((range & 0xff000000) === 0) {
+            range <<= 8
+            code = (code << 8) | input[inPos++]
+          }
+          prob = probs[p]
+          bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+          if (code >>> 0 < bound >>> 0) {
+            range = bound
+            probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+            symbol <<= 1
+          } else {
+            range = (range - bound) | 0
+            code = (code - bound) | 0
+            probs[p] = prob - (prob >>> RC_MOVE_BITS)
+            symbol = (symbol << 1) | 1
+          }
+        } while (symbol < symbols)
+        len += symbol - symbols
+
+        if (dec === MATCH_LEN_DEC) {
+          // lzma_match, continued: the distance.
+          const distState = len < DIST_STATES + MATCH_LEN_MIN ? len - MATCH_LEN_MIN : DIST_STATES - 1
+          // rc_bittree(dist_slot[dist_state], DIST_SLOTS)
+          const slots = DIST_SLOT + distState * DIST_SLOTS
+          symbol = 1
+          do {
+            p = slots + symbol
+            if ((range & 0xff000000) === 0) {
+              range <<= 8
+              code = (code << 8) | input[inPos++]
+            }
+            prob = probs[p]
+            bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+            if (code >>> 0 < bound >>> 0) {
+              range = bound
+              probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+              symbol <<= 1
+            } else {
+              range = (range - bound) | 0
+              code = (code - bound) | 0
+              probs[p] = prob - (prob >>> RC_MOVE_BITS)
+              symbol = (symbol << 1) | 1
+            }
+          } while (symbol < DIST_SLOTS)
+          const distSlot = symbol - DIST_SLOTS
+          if (distSlot < DIST_MODEL_START) {
+            rep0 = distSlot
+          } else {
+            const bits = (distSlot >> 1) - 1
+            rep0 = 2 + (distSlot & 1)
+            // rc_bittree_reverse: `count` bits from the least significant one.
+            let reverse: number
+            let count: number
+            if (distSlot < DIST_MODEL_END) {
+              rep0 = (rep0 << bits) >>> 0
+              reverse = DIST_SPECIAL + rep0 - distSlot - 1
+              count = bits
+            } else {
+              // rc_direct(&rep0, bits - ALIGN_BITS): bits of fixed fifty-fifty probability.
+              let n = bits - ALIGN_BITS
+              do {
+                if ((range & 0xff000000) === 0) {
+                  range <<= 8
+                  code = (code << 8) | input[inPos++]
+                }
+                range >>>= 1
+                code = (code - range) | 0
+                const mask = code >> 31
+                code = (code + (range & mask)) | 0
+                rep0 = ((rep0 << 1) + (mask + 1)) >>> 0
+              } while (--n > 0)
+              rep0 = (rep0 * ALIGN_SIZE) % 2 ** 32
+              reverse = DIST_ALIGN
+              count = ALIGN_BITS
+            }
+            symbol = 1
+            let value = 0
+            for (let i = 0; i < count; i++) {
+              p = reverse + symbol
+              if ((range & 0xff000000) === 0) {
+                range <<= 8
+                code = (code << 8) | input[inPos++]
+              }
+              prob = probs[p]
+              bound = Math.imul(range >>> RC_BIT_MODEL_TOTAL_BITS, prob)
+              if (code >>> 0 < bound >>> 0) {
+                range = bound
+                probs[p] = prob + ((RC_BIT_MODEL_TOTAL - prob) >>> RC_MOVE_BITS)
+                symbol <<= 1
+              } else {
+                range = (range - bound) | 0
+                code = (code - bound) | 0
+                probs[p] = prob - (prob >>> RC_MOVE_BITS)
+                symbol = (symbol << 1) | 1
+                value |= 1 << i
+              }
+            }
+            rep0 = (rep0 + value) % 2 ** 32
+          }
+        }
+      }
+
+      // dict_repeat: copies `len` bytes from rep0 + 1 back, up to `target`.
+      if (rep0 >= pos - dictStart || rep0 >= dictSize) {
+        invalid = true
+        break
+      }
+      const n = Math.min(target - pos, len)
+      len -= n
+      let back = pos - rep0 - 1
+      if (n > 32 && rep0 + 1 >= n) {
+        buf.copyWithin(pos, back, back + n)
+        pos += n
+      } else {
+        // Short or overlapping: byte by byte, since each byte may be one this copy just wrote.
+        for (let k = 0; k < n; k++) buf[pos++] = buf[back++]
       }
     }
-    // Always leave the range decoder normalized, so the end of the chunk is easy to check.
-    this.normalize()
-  }
-
-  /** dict_get(dist): the byte `dist + 1` back, or 0 while the dictionary is empty. */
-  private dictGet(dist: number): number {
-    const out = this.out
-    return out.pos > this.dictStart ? out.buf[out.pos - dist - 1] : 0
-  }
-
-  /** dict_repeat: copies `len` bytes from `rep0 + 1` back, up to `target`; false if invalid. */
-  private repeat(target: number): boolean {
-    const out = this.out
-    const dist = this.rep0
-    if (dist >= out.pos - this.dictStart || dist >= this.dictSize) return false
-    const left = Math.min(target - out.pos, this.len)
-    this.len -= left
-    const buf = out.buf
-    let back = out.pos - dist - 1
-    if (dist + 1 >= left) {
-      buf.copyWithin(out.pos, back, back + left)
-      out.pos += left
-    } else {
-      // Overlapping: each byte may be one this copy just wrote.
-      for (let k = 0; k < left; k++) buf[out.pos++] = buf[back++]
+    if (!invalid && (range & 0xff000000) === 0) {
+      // Always leave the range decoder normalized, so the end of the chunk is easy to check.
+      range <<= 8
+      code = (code << 8) | input[inPos++]
     }
-    return true
-  }
-
-  /** lzma_literal: one 8-bit byte, matched against the byte at rep0 after a match. */
-  private literal(): void {
-    const out = this.out
-    const prevByte = this.dictGet(0)
-    const low = prevByte >> (8 - this.lc)
-    const high = ((out.pos - this.dictStart) & this.literalPosMask) << this.lc
-    const probs = LITERAL + LITERAL_CODER_SIZE * (low + high)
-    let symbol: number
-    if (this.state < LIT_STATES) {
-      symbol = this.bittree(probs, 0x100)
-    } else {
-      symbol = 1
-      let matchByte = this.dictGet(this.rep0) << 1
-      let offset = 0x100
-      do {
-        const matchBit = matchByte & offset
-        matchByte <<= 1
-        const i = offset + matchBit + symbol
-        if (this.bit(probs + i)) {
-          symbol = (symbol << 1) + 1
-          offset &= matchBit
-        } else {
-          symbol <<= 1
-          offset &= ~matchBit
-        }
-      } while (symbol < 0x100)
-    }
-    out.buf[out.pos++] = symbol & 0xff
-    // lzma_state_literal
-    if (this.state <= STATE_SHORTREP_LIT_LIT) this.state = STATE_LIT_LIT
-    else if (this.state <= STATE_LIT_SHORTREP) this.state -= 3
-    else this.state -= 6
-  }
-
-  /** lzma_len: a match length into `len`. */
-  private matchLength(dec: number, posState: number): void {
-    let probs: number
-    let limit: number
-    if (!this.bit(dec + LEN_CHOICE)) {
-      probs = dec + LEN_LOW + posState * LEN_LOW_SYMBOLS
-      limit = LEN_LOW_SYMBOLS
-      this.len = MATCH_LEN_MIN
-    } else if (!this.bit(dec + LEN_CHOICE2)) {
-      probs = dec + LEN_MID + posState * LEN_MID_SYMBOLS
-      limit = LEN_MID_SYMBOLS
-      this.len = MATCH_LEN_MIN + LEN_LOW_SYMBOLS
-    } else {
-      probs = dec + LEN_HIGH
-      limit = LEN_HIGH_SYMBOLS
-      this.len = MATCH_LEN_MIN + LEN_LOW_SYMBOLS + LEN_MID_SYMBOLS
-    }
-    this.len += this.bittree(probs, limit) - limit
-  }
-
-  /** lzma_match: a match with a new distance, into rep0. */
-  private match(posState: number): void {
-    this.state = this.state < LIT_STATES ? STATE_LIT_MATCH : STATE_NONLIT_MATCH
-    this.rep3 = this.rep2
-    this.rep2 = this.rep1
-    this.rep1 = this.rep0
-    this.matchLength(MATCH_LEN_DEC, posState)
-    const distState = this.len < DIST_STATES + MATCH_LEN_MIN ? this.len - MATCH_LEN_MIN : DIST_STATES - 1
-    const distSlot = this.bittree(DIST_SLOT + distState * DIST_SLOTS, DIST_SLOTS) - DIST_SLOTS
-    if (distSlot < DIST_MODEL_START) {
-      this.rep0 = distSlot
-      return
-    }
-    const limit = (distSlot >> 1) - 1
-    let rep0 = 2 + (distSlot & 1)
-    if (distSlot < DIST_MODEL_END) {
-      rep0 = (rep0 << limit) >>> 0
-      rep0 = (rep0 + this.bittreeReverse(DIST_SPECIAL + rep0 - distSlot - 1, limit)) >>> 0
-    } else {
-      rep0 = this.direct(rep0, limit - ALIGN_BITS)
-      rep0 = (rep0 * ALIGN_SIZE + this.bittreeReverse(DIST_ALIGN, ALIGN_BITS)) % 2 ** 32
-    }
+    this.range = range
+    this.code = code
+    this.inPos = inPos
+    this.out.pos = pos
+    this.state = state
     this.rep0 = rep0
-  }
-
-  /** lzma_rep_match: a match at one of the four latest distances, moved to rep0. */
-  private repMatch(posState: number): void {
-    if (!this.bit(IS_REP0 + this.state)) {
-      if (!this.bit(IS_REP0_LONG + this.state * POS_STATES_MAX + posState)) {
-        this.state = this.state < LIT_STATES ? STATE_LIT_SHORTREP : STATE_NONLIT_REP
-        this.len = 1
-        return
-      }
-    } else {
-      let tmp: number
-      if (!this.bit(IS_REP1 + this.state)) {
-        tmp = this.rep1
-      } else {
-        if (!this.bit(IS_REP2 + this.state)) {
-          tmp = this.rep2
-        } else {
-          tmp = this.rep3
-          this.rep3 = this.rep2
-        }
-        this.rep2 = this.rep1
-      }
-      this.rep1 = this.rep0
-      this.rep0 = tmp
-    }
-    this.state = this.state < LIT_STATES ? STATE_LIT_LONGREP : STATE_NONLIT_REP
-    this.matchLength(REP_LEN_DEC, posState)
+    this.rep1 = rep1
+    this.rep2 = rep2
+    this.rep3 = rep3
+    this.len = len
+    if (invalid) throw new DamagedError('xz match reaches before the start of the dictionary')
   }
 
   /** lzma_reset: the LZMA state and range decoder; the dictionary stays. */

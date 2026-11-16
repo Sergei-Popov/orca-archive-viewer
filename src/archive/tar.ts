@@ -200,9 +200,10 @@ export function parsePax(data: Uint8Array): PaxRecords {
     while (p < data.length && p - at < 21 && data[p] >= 0x30 && data[p] <= 0x39) length = length * 10 + data[p++] - 0x30
     const digits = p - at
     const end = at + length
-    // The shortest record is "<digits> k=\n".
-    const framed =
-      digits > 0 && digits <= 20 && data[at] !== 0x30 && data[p] === 0x20 && length >= digits + 4 && end <= data.length
+    // The shortest record is "<digits> k=\n". At most 20 digits and that minimum length keep the
+    // scan linear: each record moves on by at least 5 bytes. Leading zeros are allowed, as tarfile
+    // and bsdtar allow them ("017 path=renamed\n").
+    const framed = digits > 0 && digits <= 20 && data[p] === 0x20 && length >= digits + 4 && end <= data.length
     if (!framed || data[end - 1] !== 0x0a) return { records, damaged: true }
     const record = data.subarray(p + 1, end - 1)
     const eq = record.indexOf(0x3d)
@@ -309,7 +310,9 @@ export function parseTar(
         type,
         size: entrySize,
         dataStart,
-        mtime: time(mtimePax) ?? time(tarNumber(bytes, at + 136, 12)),
+        // A PAX mtime replaces the header's; one that cannot be used leaves no date, not the
+        // header's field (writers put 0 there, which would read as a believable 1970).
+        mtime: headerPax.mtime !== undefined ? time(mtimePax) : time(tarNumber(bytes, at + 136, 12)),
         mode: tarNumber(bytes, at + 100, 8) ?? 0,
         sparse
       })

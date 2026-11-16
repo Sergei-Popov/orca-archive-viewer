@@ -7,6 +7,7 @@ import { DamagedError } from '../codecs/sink'
 import { EntryError } from './model'
 import { decodeLegacy } from './names'
 import { dosTime, parseZip } from './zip'
+import { archiveTree, findNode } from '../tree'
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 const cp866 = (s: string) => Uint8Array.from(s, (c) => {
@@ -64,6 +65,40 @@ test('names: UTF-8 flag, valid UTF-8, and legacy code pages with re-decoding', (
   assert.equal(western.entries[2].path, decodeLegacy(cp866('Отчет.doc'), 'cp437'))
   assert.equal(western.entries[2].legacy, true)
   assert.equal(western.entries[0].legacy, false)
+})
+
+test('a code page switch keeps every copy of a name a ZIP lists twice', () => {
+  const name = cp866('Отчет/дубль.txt')
+  const archive = parseZip(
+    zip([
+      { name, data: utf8('first'), host: 0 },
+      { name: 'readme.txt', data: utf8('hi') },
+      { name, data: utf8('second copy'), host: 0 }
+    ]),
+    'cp437'
+  )
+  assert.equal(archive.legacyNames, true)
+  const copies = (tree: ReturnType<typeof archiveTree>, folder: string) =>
+    findNode(tree, folder)!.children.map((node) => [node.name, node.size, node.duplicate])
+  const before = archiveTree(archive)
+  assert.equal(before.files, 3)
+  const western = decodeLegacy(cp866('Отчет'), 'cp437')
+  assert.deepEqual(copies(before, western), [
+    [decodeLegacy(cp866('дубль.txt'), 'cp437'), 5, { copy: 1, copies: 2 }],
+    [decodeLegacy(cp866('дубль.txt'), 'cp437'), 11, { copy: 2, copies: 2 }]
+  ])
+  for (const encoding of ['cp866', 'windows-1251', 'cp437'] as const) {
+    const switched = archive.withEncoding(encoding)
+    const tree = archiveTree(switched)
+    assert.equal(tree.files, 3, encoding)
+    const folder = decodeLegacy(cp866('Отчет'), encoding)
+    const file = decodeLegacy(cp866('дубль.txt'), encoding)
+    assert.deepEqual(copies(tree, folder), [
+      [file, 5, { copy: 1, copies: 2 }],
+      [file, 11, { copy: 2, copies: 2 }]
+    ], encoding)
+  }
+  assert.deepEqual(copies(archiveTree(archive.withEncoding('cp866')), 'Отчет').map((row) => row[0]), ['дубль.txt', 'дубль.txt'])
 })
 
 test('a UTF-8 flag on bytes that are not UTF-8 falls back to the code page', () => {
@@ -233,6 +268,28 @@ test('a ZIP cut inside its central directory uses the records it has, and one cu
   const cut = parseZip(big.subarray(0, 2000), 'cp437')
   assert.deepEqual(cut.entries.map((e) => [e.path, e.size]), [['big.bin', 5000]])
   assert.throws(() => cut.read(cut.entries[0], 1 << 20), (e: unknown) => e instanceof EntryError && e.code === 'damaged')
+})
+
+test('a ZIP cut inside a central record keeps the name, kind and date from its local header', () => {
+  const ut = (seconds: number) => Uint8Array.from([0x55, 0x54, 5, 0, 1, seconds & 0xff, (seconds >>> 8) & 0xff, (seconds >>> 16) & 0xff, seconds >>> 24])
+  const whole = zip([
+    { name: 'dir/some-longer-file-name-00.txt', data: utf8('x'.repeat(500)), method: 8, extra: ut(1700000000) },
+    { name: 'link-a', data: utf8('dir/some-longer-file-name-00.txt'), external: (0o120777 << 16) >>> 0, extra: ut(1700000100) },
+    { name: 'proj/zz-link-target', data: utf8('zz'), extra: ut(1700000200) }
+  ])
+  const full = parseZip(whole, 'cp437').entries
+  const local = dosTime(0x5b21, 0)
+  let cd = 0
+  while (!(whole[cd] === 0x50 && whole[cd + 1] === 0x4b && whole[cd + 2] === 1 && whole[cd + 3] === 2)) cd++
+  for (let cut = cd; cut < whole.length; cut++) {
+    const archive = parseZip(whole.subarray(0, cut), 'cp437')
+    const at = `cut at ${cut} of ${whole.length}`
+    assert.equal(archive.damaged, true, at)
+    assert.deepEqual(archive.entries.map((e) => [e.path, e.dir, e.size]), full.map((e) => [e.path, e.dir, e.size]), at)
+    // Each date is the central record's, or the local header's when its central record is cut.
+    archive.entries.forEach((e, i) => assert.ok(e.mtime === full[i].mtime || e.mtime === local, `${at}: ${e.path} ${e.mtime}`))
+    assert.equal(text(archive.read(archive.entries[0], 1000).bytes), 'x'.repeat(500), at)
+  }
 })
 
 test('ZIP link targets are read when shown, not while the archive opens', () => {

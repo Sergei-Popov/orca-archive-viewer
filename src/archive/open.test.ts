@@ -103,6 +103,16 @@ test('zeros at the start are an empty tar only when nothing else follows', async
   assert.deepEqual(archive.entries, [])
   // An archive with zeros before a zip stays a zip.
   assert.equal(detect(concat(new Uint8Array(2048), zip([{ name: 'a' }]))), 'zip')
+  // An empty tar joined with a tar (`cat empty.tar dups.tar`) is a tar, which tar lists as
+  // empty; zeros and then a block that is not a tar header are still a single file.
+  const joined = concat(new Uint8Array(1024), tar([{ name: 'a.txt', data: utf8('a') }]))
+  assert.equal(detect(joined), 'tar')
+  assert.equal(detect(concat(new Uint8Array(4096), tar([{ name: 'a.txt', data: utf8('a') }]))), 'tar')
+  const listed = await openArchive(joined, { encoding: 'cp437', name: 'joined.tar' })
+  assert.equal(listed.format, 'TAR')
+  assert.deepEqual(listed.entries, [])
+  assert.equal((await openArchive(gzipSync(joined), { encoding: 'cp437', name: 'joined.tar.gz' })).format, 'TAR + GZIP')
+  assert.equal(detect(concat(new Uint8Array(1024), new Uint8Array(512).fill(0x41), new Uint8Array(512))), 'unknown')
 })
 
 /** Text that compresses like prose, not like a repeated line. */

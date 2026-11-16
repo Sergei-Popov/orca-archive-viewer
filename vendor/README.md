@@ -68,7 +68,8 @@ shasum -a 256 ../vendor/*/*.mjs
 v2024-12-30 (git commit `ae63ae3a36ed01724674e8f3d750dc47bf125410`, mirrored at
 https://github.com/tukaani-project/xz-embedded) by Lasse Collin and Igor Pavlov, released under
 the BSD Zero Clause License (0BSD). 0BSD asks for no notice; the authors are named anyway, here,
-in the README's License section and in each ported file's header.
+in the README's License section and in each ported file's header, and `src/codecs/xz/LICENSE`
+holds the upstream licence text (XZ Embedded's `COPYING`).
 
 | Ported file               | From (`linux/lib/xz/`)                         |
 | ------------------------- | ---------------------------------------------- |
@@ -79,7 +80,9 @@ in the README's License section and in each ported file's header.
 Each file's header says what changed from the C code. In short: the whole input is in memory, so
 there is no multi-call state machine; the LZMA2 filter only, with CRC-32, CRC-64 or no check and
 dictionaries up to 64 MiB; the Index is compared with the Blocks record by record; the first byte
-of each LZMA chunk must be zero; and the decoders yield between LZMA2 chunks (`src/codecs/steps.ts`).
+of each LZMA chunk must be zero; the range decoder and the LZMA symbol decoders are written out
+in one loop, with their state in locals, for speed; CRC-64 goes eight bytes at a time; and the
+decoders yield between LZMA2 chunks (`src/codecs/steps.ts`).
 Version 0.1.0 shipped XZ Embedded as WebAssembly instead; that file is gone.
 
 To compare with upstream, read the port beside the C files of that commit:

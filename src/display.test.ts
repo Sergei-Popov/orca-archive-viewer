@@ -39,6 +39,29 @@ test('hidden characters in names are written out, and left out of a name to save
   assert.equal(saveName(RLO, 'file'), 'file')
 })
 
+test('joiners and soft hyphens in names are text: kept as they are when shown and saved', () => {
+  const cp = (...points: number[]) => String.fromCodePoint(...points)
+  // Persian "I want" with a zero width non-joiner, an emoji ZWJ sequence, Hindi with a joiner, a
+  // soft hyphen in German, and an Arabic number sign.
+  const names = [
+    `می${cp(0x200c)}خواهم.txt`,
+    `👩${cp(0x200d)}💻 notes.txt`,
+    `सम्पर्क${cp(0x200d)} सूची.txt`,
+    `Donau${cp(0xad)}dampf${cp(0xad)}schiff.txt`,
+    `${cp(0x600)}١٢٣.txt`
+  ]
+  for (const name of names) {
+    assert.equal(visibleText(name), name)
+    assert.equal(saveName(`docs/${name}`, 'file'), name)
+  }
+  // Bidi controls and other invisible format characters around them are still written out.
+  assert.equal(visibleText(`می${cp(0x200c)}${cp(0x200f)}خواهم`), `می${cp(0x200c)}⟨U+200F⟩خواهم`)
+  assert.equal(saveName(`👩${cp(0x200d)}💻${cp(0x200b)}${cp(0x061c)}.txt`, 'file'), `👩${cp(0x200d)}💻.txt`)
+  for (const point of [0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0xfeff, 0x2060]) {
+    assert.equal(visibleText(`a${cp(point)}b`), `a⟨U+${point.toString(16).toUpperCase().padStart(4, '0')}⟩b`)
+  }
+})
+
 test('the filter highlight marks the matching characters, also after a letter whose lowercase is longer', () => {
   assert.equal(marked('İstanbul notları.txt', 'notlar'), 'İstanbul [notlar]ı.txt')
   assert.equal(marked('İİİ readme.md', 'README'), 'İİİ [readme].md')
