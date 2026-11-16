@@ -1,6 +1,8 @@
 // Collects decompressed output up to a limit, so a small archive that unpacks to gigabytes (a
 // "zip bomb") is refused or cut at the limit instead of exhausting the tab's memory.
 
+import { type Steps, run } from './steps'
+
 /** Thrown when a stream unpacks to more than the caller allowed. */
 export class TooLargeError extends Error {
   readonly limit: number
@@ -136,11 +138,22 @@ export function feed(
   sink: Sink,
   slice = 1 << 16
 ): void {
+  run(feedSteps(data, push, sink, slice))
+}
+
+/** feed in steps, one slice each (see steps.ts). */
+export function* feedSteps(
+  data: Uint8Array,
+  push: (chunk: Uint8Array, final: boolean) => void,
+  sink: Sink,
+  slice = 1 << 16
+): Steps<void> {
   if (data.length === 0) {
     push(data, true)
     return
   }
   for (let at = 0; at < data.length && !sink.full; at += slice) {
+    if (at) yield
     const end = Math.min(at + slice, data.length)
     push(data.subarray(at, end), end === data.length)
   }

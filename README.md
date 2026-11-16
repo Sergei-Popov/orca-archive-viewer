@@ -55,6 +55,17 @@ damage, or for a `.gz`, `.bz2`, `.xz` or `.zst` of one file, the part of it befo
 central directory is read from the local headers in front of the cut. A ZIP entry that unpacks
 to more than the size its archive records is damaged, whatever its method.
 
+**Known limits.**
+
+- Everything runs on the tab's own thread, with no worker. Large `.bz2` and `.xz` files (tens
+  of MB that unpack to hundreds) take several seconds to open. Unpacking gives the thread back
+  every 40 ms, so the tab keeps painting and a newer version of the file stops the work, but
+  listing the entries and reading one ZIP entry happen in one go.
+- Zstandard content checksums are not checked; frame sizes and block structure are.
+- Joining an unpacked stream briefly takes about twice its size in memory.
+- A path deeper than 1,024 folders or longer than 4,096 characters is cut, and the archive is
+  marked damaged.
+
 ## Keyboard
 
 | Key                  | Action                                            |

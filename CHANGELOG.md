@@ -39,6 +39,10 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- Unpacking a compressed archive gives the tab's thread back every 40 ms, so the tab keeps
+  painting and a newer version of the file, or leaving a nested archive, stops the work
+  instead of waiting for it. Large `.bz2` and `.xz` files still take several seconds to open
+  (see Known limits in the README).
 - The README gave Orca's limit for opening a file in a plugin editor as 64 MB; Orca 1.4.258
   opens files of at most 50 MB there. Save… still goes up to 64 MB.
 - The ZIP method "Stored" is translated (Russian "Без сжатия").

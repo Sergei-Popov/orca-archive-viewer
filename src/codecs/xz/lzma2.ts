@@ -11,6 +11,7 @@
 // - The first byte of an LZMA chunk must be zero, as liblzma requires; XZ Embedded ignores it.
 
 import { DamagedError, TooLargeError } from '../sink'
+import type { Steps } from '../steps'
 
 // Range decoder (xz_lzma2.h).
 const RC_TOP_VALUE = 1 << 24
@@ -165,10 +166,11 @@ export class Lzma2Decoder {
 
   /**
    * xz_dec_lzma2_run over the whole LZMA2 data at `data[at]`: returns the position after the
-   * end marker, or -1 once the output is full in truncate mode.
+   * end marker, or -1 once the output is full in truncate mode. Yields after each chunk.
    */
-  run(data: Uint8Array, at: number): number {
-    for (;;) {
+  *run(data: Uint8Array, at: number): Steps<number> {
+    for (let first = true; ; first = false) {
+      if (!first) yield
       if (at >= data.length) throw endsEarly()
       // LZMA2 control byte
       //   0x00        end marker

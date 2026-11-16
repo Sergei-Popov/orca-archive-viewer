@@ -2,6 +2,7 @@
 // version and what changed).
 
 import { DamagedError, type StreamResult, asDecodeError } from './sink'
+import { type Steps, run } from './steps'
 import { Output } from './xz/lzma2'
 import { decodeXz, indexedSize } from './xz/stream'
 
@@ -11,9 +12,14 @@ import { decodeXz, indexedSize } from './xz/stream'
  * decoded before the damage, as `xz -d` writes it before it stops.
  */
 export function unxz(data: Uint8Array, limit: number, truncate = false, partial = false): StreamResult {
+  return run(unxzSteps(data, limit, truncate, partial))
+}
+
+/** unxz in steps, one LZMA2 chunk each. */
+export function* unxzSteps(data: Uint8Array, limit: number, truncate = false, partial = false): Steps<StreamResult> {
   const out = new Output(limit, truncate, indexedSize(data))
   try {
-    decodeXz(data, out)
+    yield* decodeXz(data, out)
   } catch (error) {
     const failure = asDecodeError(error, 'xz')
     if (partial && failure instanceof DamagedError && out.pos > 0) {

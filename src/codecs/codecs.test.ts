@@ -5,13 +5,14 @@ import { bzip2 } from '../fixtures/bzip2'
 import { base64, sha256Xz, x86Xz } from '../fixtures/samples'
 import { xz } from '../fixtures/xz'
 import { zstd } from '../fixtures/zstd'
-import { bunzip2 } from './bzip2'
+import { bunzip2, bunzip2Steps } from './bzip2'
 import { crc32 } from './crc32'
-import { gunzip, gzipHeader, inflate, singleMemberSize } from './deflate'
+import { gunzip, gunzipSteps, gzipHeader, inflate, singleMemberSize } from './deflate'
 import { DamagedError, Sink, TooLargeError, UnsupportedDataError } from './sink'
-import { unxz } from './xz'
+import { CancelledError, run, runAsync } from './steps'
+import { unxz, unxzSteps } from './xz'
 import { indexedSize } from './xz/stream'
-import { unzstd, zstdFrames } from './zstd'
+import { unzstd, unzstdSteps, zstdFrames } from './zstd'
 
 const is = (type: abstract new (...args: never[]) => unknown) => (error: unknown) => error instanceof type
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
@@ -560,4 +561,69 @@ test('the XZ Index gives the unpacked size of every Stream, or 0 when it does no
   // Whatever the hint says, the decoder checks the Index again.
   const out = unxz(two, 1 << 26)
   assert.deepEqual([out.bytes.length, out.bytes.buffer.byteLength], [a.length + b.length, a.length + b.length])
+})
+
+test('decoders in steps give the thread back and stop when cancelled', async () => {
+  // 1 MiB from xorshift: it does not pack, so every decoder takes many steps.
+  const plain = new Uint8Array(1 << 20)
+  let x = 2463534242
+  for (let i = 0; i < plain.length; i++) {
+    x ^= x << 13
+    x ^= x >>> 17
+    x ^= x << 5
+    plain[i] = x & 0xff
+  }
+  const streams: [string, Uint8Array][] = [
+    ['gzip', gzipSync(plain)],
+    ['bzip2', bzip2(plain, { level: 1 })],
+    ['xz', xz(plain, { chunkSize: 65536 })],
+    ['zstd', zstd(plain, { windowLog: 17, contentSize: false })]
+  ]
+  for (const [label, packed] of streams) {
+    const steps = () =>
+      label === 'gzip'
+        ? gunzipSteps(packed, 1 << 26)
+        : label === 'bzip2'
+          ? bunzip2Steps(packed, 1 << 26)
+          : label === 'xz'
+            ? unxzSteps(packed, 1 << 26)
+            : unzstdSteps(packed, 1 << 26)
+    // Straight through, the steps give what the one-call decoders give.
+    assert.deepEqual(run(steps()).bytes, plain, label)
+    let count = 0
+    for (const _ of { [Symbol.iterator]: steps }) count++
+    // gzip and zstd step through 64 KiB of input at a time, bzip2 by 100 kB blocks, XZ by chunks.
+    assert.ok(count >= 8, `${label}: ${count} steps for ${packed.length} bytes`)
+    // Paced with no time between pauses, a task queued before it (as a new document's message
+    // would be) runs before it ends, and cancelling stops it at the next pause.
+    let delivered = false
+    const { port1, port2 } = new MessageChannel()
+    port1.onmessage = () => {
+      delivered = true
+      port1.close()
+    }
+    port2.postMessage(null)
+    const paced = await runAsync(steps(), { cancelled: () => false, every: 0 })
+    assert.deepEqual(paced.bytes, plain, label)
+    assert.ok(delivered, label)
+    let pauses = 0
+    await assert.rejects(runAsync(steps(), { cancelled: () => ++pauses >= 2, every: 0 }), (e: unknown) => e instanceof CancelledError)
+    assert.equal(pauses, 2, label)
+  }
+})
+
+test('a Zstandard frame streamed in steps is held to the size it records', () => {
+  const plain = new Uint8Array(5 << 20).map((_, i) => (i * 7) & 0xff)
+  const packed = zstd(plain, { windowLog: 17 })
+  const frames = zstdFrames(packed)
+  assert.equal(frames[0].size, plain.length)
+  assert.deepEqual(unzstd(packed, 1 << 26).bytes, plain)
+  assert.equal(unzstd(packed, 1 << 26).bytes.buffer.byteLength, plain.length)
+  // The same frame recording one byte less (Frame_Content_Size is the last header field here).
+  const lying = packed.slice()
+  const header = 4 + 1 + 1
+  const size = new DataView(lying.buffer).getUint32(header, true)
+  assert.equal(size, plain.length)
+  new DataView(lying.buffer).setUint32(header, plain.length - 1, true)
+  assert.throws(() => unzstd(lying, 1 << 26), (e: unknown) => e instanceof DamagedError)
 })

@@ -6,6 +6,7 @@ import { type Archive, type Entry, EntryError, type ReadResult } from './archive
 import { LEGACY_ENCODINGS, type LegacyEncoding } from './archive/names'
 import { NotArchiveError, UnsupportedFormatError, isArchive, openArchive } from './archive/open'
 import { DamagedError, TooLargeError, UnsupportedDataError, type UnsupportedFeature } from './codecs/sink'
+import { CancelledError } from './codecs/steps'
 import { type ContentKind, IMAGE_TYPES, classify, extension, hexDump, imageType, nameKind } from './content'
 import { formatBytes, formatCrc, formatDate, formatMode, formatRatio, formatShortDate, formatSize, saveName, visibleText } from './display'
 import { append, h, highlight, svg } from './dom'
@@ -1050,6 +1051,10 @@ export class ArchiveView {
     const entry = node.entry
     if (!level || !entry || this.opening) return
     this.opening = true
+    const selected = level.selected
+    // The tree stays usable while a big archive unpacks: leaving this level or selecting another
+    // row stops the work.
+    const moved = () => this.level !== level || level.selected !== selected
     const label = button?.lastChild?.textContent ?? ''
     if (button) {
       button.disabled = true
@@ -1065,9 +1070,10 @@ export class ArchiveView {
       const archive = await openArchive(result.bytes, {
         encoding: this.encoding,
         name: node.name,
-        limit: budget - result.bytes.length
+        limit: budget - result.bytes.length,
+        pacing: { cancelled: moved }
       })
-      if (this.level !== level) return
+      if (moved()) return
       level.selected = node.path
       level.scrollTop = this.scroll.scrollTop
       const next = this.newLevel(archive, node.name, true)
@@ -1075,7 +1081,7 @@ export class ArchiveView {
       this.levels.push(next)
       this.renderLevel(true)
     } catch (error) {
-      if (this.level !== level || level.selected !== node.path) return
+      if (this.level !== level || level.selected !== node.path || error instanceof CancelledError) return
       const expected = [UnsupportedFormatError, NotArchiveError, TooLargeError, TooDeepError, UnsupportedDataError]
       if (!expected.some((type) => error instanceof type)) {
         console.warn('[archive-viewer] cannot open nested archive', node.path, error)

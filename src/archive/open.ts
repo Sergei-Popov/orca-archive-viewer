@@ -1,11 +1,12 @@
 // Turns bytes into an Archive: ZIP and TAR directly; GZIP, bzip2, XZ and Zstandard are unpacked
 // first and show the TAR inside, or a single file when there is none.
 
-import { bunzip2 } from '../codecs/bzip2'
-import { gunzip, gzipHeader } from '../codecs/deflate'
+import { bunzip2Steps } from '../codecs/bzip2'
+import { gunzipSteps, gzipHeader } from '../codecs/deflate'
 import { DamagedError } from '../codecs/sink'
-import { unxz } from '../codecs/xz'
-import { MAX_ZSTD_WINDOW, unzstd } from '../codecs/zstd'
+import { type Pacing, type Steps, run, runAsync } from '../codecs/steps'
+import { unxzSteps } from '../codecs/xz'
+import { MAX_ZSTD_WINDOW, unzstdSteps } from '../codecs/zstd'
 import { type Magic, detect, isTar } from './detect'
 import { type Archive, EntryError } from './model'
 import { type LegacyEncoding, baseName, decodeName } from './names'
@@ -55,6 +56,9 @@ export type OpenOptions = {
   name?: string
   /** Unpacked size limit for compressed streams. */
   limit?: number
+  /** Unpack a compressed stream in steps that give the thread back, and stop (throwing
+   *  `CancelledError`) once `pacing.cancelled()` is true. Without it the stream unpacks in one go. */
+  pacing?: Pacing
 }
 
 /** The name of an archive format the viewer knows but does not open (7-Zip, RAR…), or null. */
@@ -82,14 +86,15 @@ export async function openArchive(bytes: Uint8Array, options: OpenOptions): Prom
   }
 
   // Every decoder keeps what it unpacked before damage (a cut download) and says so.
-  const { bytes: inner, damaged } =
+  const steps: Steps<{ bytes: Uint8Array; damaged: boolean }> =
     magic === 'gzip'
-      ? gunzip(bytes, limit)
+      ? gunzipSteps(bytes, limit)
       : magic === 'bzip2'
-        ? bunzip2(bytes, limit, false, true)
+        ? bunzip2Steps(bytes, limit, false, true)
         : magic === 'xz'
-          ? unxz(bytes, limit, false, true)
-          : unzstd(bytes, limit, false, MAX_ZSTD_WINDOW, true)
+          ? unxzSteps(bytes, limit, false, true)
+          : unzstdSteps(bytes, limit, false, MAX_ZSTD_WINDOW, true)
+  const { bytes: inner, damaged } = options.pacing ? await runAsync(steps, options.pacing) : run(steps)
 
   if (isTar(inner)) {
     return parseTar(inner, options.encoding, `TAR + ${label}`, bytes.length, damaged)

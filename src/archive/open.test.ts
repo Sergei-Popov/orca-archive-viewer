@@ -1,6 +1,7 @@
 import { assert, test } from 'orca/testing'
 import { gzipSync } from '../../vendor/fflate/fflate.mjs'
 import { DamagedError, UnsupportedDataError } from '../codecs/sink'
+import { CancelledError } from '../codecs/steps'
 import { concat, tar, utf8, zip } from '../fixtures/build'
 import { bzip2 } from '../fixtures/bzip2'
 import { xz } from '../fixtures/xz'
@@ -147,4 +148,19 @@ test('a cut-off single-file .bz2, .xz and .zst shows the part before the cut', a
     assert.ok(bytes.length > 0 && bytes.length < data.length, `${bytes.length} bytes`)
     assert.deepEqual(bytes, data.subarray(0, bytes.length))
   }
+})
+
+test('with pacing, a compressed archive unpacks in steps, and a cancelled one stops', async () => {
+  const files = Array.from({ length: 40 }, (_, i) => ({ name: `f${i}.bin`, data: new Uint8Array(30000).map((_, k) => (k * (i + 7)) ^ (k >> 3)) }))
+  const packed = bzip2(tar(files), { level: 1 })
+  const plain = await openArchive(packed, { encoding: 'cp437' })
+  let checks = 0
+  const paced = await openArchive(packed, { encoding: 'cp437', pacing: { cancelled: () => (checks++, false), every: 0 } })
+  assert.ok(checks >= 5, `${checks} pauses`)
+  assert.deepEqual(paced.entries.map((e) => [e.path, e.size]), plain.entries.map((e) => [e.path, e.size]))
+  assert.deepEqual(paced.read(paced.entries[39], 1 << 20).bytes, files[39].data)
+  await assert.rejects(
+    openArchive(packed, { encoding: 'cp437', pacing: { cancelled: () => true, every: 0 } }),
+    (e: unknown) => e instanceof CancelledError
+  )
 })

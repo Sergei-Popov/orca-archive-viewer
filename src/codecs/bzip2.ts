@@ -4,6 +4,7 @@
 // are refused.
 
 import { DamagedError, Sink, type StreamResult, asDecodeError } from './sink'
+import { type Steps, run } from './steps'
 
 const MAX_CODE_LENGTH = 20
 const GROUP_SIZE = 50
@@ -119,6 +120,11 @@ function crcTableBE(): Uint32Array {
  * `partial`: damaged or cut-off data returns the blocks that passed their CRC before the damage.
  */
 export function bunzip2(data: Uint8Array, limit: number, truncate = false, partial = false): StreamResult {
+  return run(bunzip2Steps(data, limit, truncate, partial))
+}
+
+/** bunzip2 in steps, one block each. */
+export function* bunzip2Steps(data: Uint8Array, limit: number, truncate = false, partial = false): Steps<StreamResult> {
   const sink = new Sink(limit, truncate)
   // The block buffer (3.6 MB at level 9) is made on the first block and shared by every
   // stream, so many empty streams cost nothing.
@@ -141,7 +147,7 @@ export function bunzip2(data: Uint8Array, limit: number, truncate = false, parti
       if (level < 1 || level > 9) {
         throw new DamagedError('bad bzip2 block size')
       }
-      decodeStream(r, level * 100000, sink, scratch)
+      yield* decodeStream(r, level * 100000, sink, scratch)
       streams++
     }
   } catch (error) {
@@ -157,7 +163,7 @@ export function bunzip2(data: Uint8Array, limit: number, truncate = false, parti
 /** `good`: output bytes of the blocks that passed their CRC. */
 type Scratch = { tt: Uint32Array | null; good: number }
 
-function decodeStream(r: BitReader, blockMax: number, sink: Sink, scratch: Scratch): void {
+function* decodeStream(r: BitReader, blockMax: number, sink: Sink, scratch: Scratch): Steps<void> {
   for (;;) {
     const hi = r.bits(24)
     const lo = r.bits(24)
@@ -167,6 +173,7 @@ function decodeStream(r: BitReader, blockMax: number, sink: Sink, scratch: Scrat
       decodeBlock(r, scratch.tt, blockMax, sink, crc)
       scratch.good = sink.total
       if (sink.full) return
+      yield
     } else if (hi === 0x177245 && lo === 0x385090) {
       return
     } else {

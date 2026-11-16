@@ -4,6 +4,7 @@
 import { Inflate } from '../../vendor/fflate/fflate.mjs'
 import { crc32 } from './crc32'
 import { DamagedError, Sink, TooLargeError, asDecodeError, feed } from './sink'
+import { type Steps, run } from './steps'
 
 const SLICE = 1 << 16
 
@@ -154,6 +155,11 @@ export function singleMemberSize(data: Uint8Array): number {
 }
 
 export function gunzip(data: Uint8Array, limit: number, slice = SLICE): GunzipResult {
+  return run(gunzipSteps(data, limit, slice))
+}
+
+/** gunzip in steps, one slice of input each. */
+export function* gunzipSteps(data: Uint8Array, limit: number, slice = SLICE): Steps<GunzipResult> {
   const sink = new Sink(limit, false, singleMemberSize(data))
   let damaged = false
   let members = 0
@@ -182,6 +188,7 @@ export function gunzip(data: Uint8Array, limit: number, slice = SLICE): GunzipRe
         const end = Math.min(pos + slice, data.length)
         stream.push(data.subarray(pos, end), false)
         pos = end
+        yield
         if (state.s.f && !state.s.l) {
           rest = state.p.subarray(((state.s.p ?? 0) + 7) >> 3)
           break

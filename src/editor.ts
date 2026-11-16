@@ -6,6 +6,7 @@
 
 import { defaultLegacyEncoding } from './archive/names'
 import { openArchive } from './archive/open'
+import { CancelledError } from './codecs/steps'
 import { stringsFor } from './i18n'
 import { installStyles } from './styles'
 import { ArchiveView, describeOpenError } from './view'
@@ -43,12 +44,14 @@ if (!api) {
     try {
       // Orca never tells an editor the file's name; the matched suffix names a lone .gz's file.
       const name = doc.fileType ? `file.${doc.fileType}` : undefined
-      const archive = await openArchive(bytes, { encoding: view.encoding, name })
+      // Unpacking gives the thread back now and then, so a newer document stops it.
+      const pacing = { cancelled: () => current !== generation }
+      const archive = await openArchive(bytes, { encoding: view.encoding, name, pacing })
       if (current !== generation) return
       view.show(archive)
       loaded = true
     } catch (error) {
-      if (current !== generation) return
+      if (current !== generation || error instanceof CancelledError) return
       console.warn('[archive-viewer] cannot open the archive', error)
       loaded = false
       view.showError(strings.errorTitle, describeOpenError(error, strings, locale))

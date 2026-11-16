@@ -5,12 +5,16 @@
 // 0.1.1 moved the whole window after every block).
 
 import { Decompress, decompress } from '../../vendor/fzstd/fzstd.mjs'
-import { DamagedError, Sink, type StreamResult, TooLargeError, UnsupportedDataError, asDecodeError, feed } from './sink'
+import { DamagedError, Sink, type StreamResult, TooLargeError, UnsupportedDataError, asDecodeError, feedSteps } from './sink'
+import { type Steps, run } from './steps'
 
 /** Largest window the viewer unpacks; zstd uses at most 8 MiB below level 20 (`--ultra`). */
 export const MAX_ZSTD_WINDOW = 128 * 1024 * 1024
 
 const MAX_BLOCK = 128 * 1024
+
+/** Frames that record at most this size are unpacked in one call; larger ones are streamed. */
+const ONE_SHOT = 4 * 1024 * 1024
 
 /** Thrown from fzstd's output callback to stop it once the sink is full. */
 const FULL = new Error('zstd output is full')
@@ -128,6 +132,17 @@ export function unzstd(
   maxWindow = MAX_ZSTD_WINDOW,
   partial = false
 ): StreamResult {
+  return run(unzstdSteps(data, limit, truncate, maxWindow, partial))
+}
+
+/** unzstd in steps: a frame up to ONE_SHOT bytes, or 64 KiB of a larger frame's input, each. */
+export function* unzstdSteps(
+  data: Uint8Array,
+  limit: number,
+  truncate = false,
+  maxWindow = MAX_ZSTD_WINDOW,
+  partial = false
+): Steps<StreamResult> {
   const { frames, error } = scanFrames(data)
   if (error && !partial) throw error
   if (frames.some((frame) => !frame.skippable && frame.window > maxWindow)) {
@@ -143,11 +158,15 @@ export function unzstd(
       if (sink.full) break
       const bytes = data.subarray(frame.start, frame.end)
       const room = limit - sink.total
-      if (!frame.cut && frame.size !== null && frame.size <= room) {
+      if (!frame.cut && frame.size !== null && frame.size <= room && frame.size <= ONE_SHOT) {
         sink.push(decompress(bytes, new Uint8Array(frame.size)))
+        yield
         continue
       }
-      if (!frame.cut && frame.size !== null && !truncate) throw new TooLargeError(limit)
+      if (!frame.cut && frame.size !== null && frame.size > room && !truncate) throw new TooLargeError(limit)
+      // A larger frame is streamed too, so the work comes in steps; the sink, sized from the
+      // frames, still holds it in one buffer, and its size is checked against the header.
+      const before = sink.total
       // Unknown size, only the start of a long frame is wanted, or the frame is cut off (never
       // pushed as final, so its whole blocks come out): stream it. A slice of input can hold far
       // more than is wanted (an RLE block is 128 KiB for 4 bytes), so the decoder is stopped as
@@ -157,9 +176,12 @@ export function unzstd(
         if (sink.full) throw FULL
       })
       try {
-        feed(bytes, (chunk, final) => stream.push(chunk, final && !frame.cut), sink)
+        yield* feedSteps(bytes, (chunk, final) => stream.push(chunk, final && !frame.cut), sink)
       } catch (stop) {
         if (stop !== FULL) throw stop
+      }
+      if (!frame.cut && frame.size !== null && !sink.full && sink.total - before !== frame.size) {
+        throw new DamagedError('zstd frame is not the size it records')
       }
     }
   } catch (caught) {
