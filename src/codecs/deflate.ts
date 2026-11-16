@@ -135,10 +135,26 @@ export type GunzipResult = {
  * before the damage with `damaged` set; data with nothing readable throws `DamagedError`.
  * Throws `TooLargeError` past `limit`.
  */
+/**
+ * The size a gzip file unpacks to, from the ISIZE at its end, when that fits one member: DEFLATE
+ * output is at least its input less stored-block overhead and at most 1032 times it. Otherwise
+ * 0: several members (ISIZE is the last one's), trailing bytes, or 4 GiB or more (ISIZE wraps).
+ */
+export function singleMemberSize(data: Uint8Array): number {
+  if (data.length < 18) return 0
+  let start: number
+  try {
+    start = memberHeader(data, 0)
+  } catch {
+    return 0
+  }
+  const packed = data.length - start - 8
+  const size = u32(data, data.length - 4)
+  return packed > 0 && size + 64 >= packed - Math.ceil(packed / 8192) && size <= packed * 1032 + 64 ? size : 0
+}
+
 export function gunzip(data: Uint8Array, limit: number, slice = SLICE): GunzipResult {
-  // ISIZE of the last member: the whole size for the usual single-member file.
-  const hint = data.length >= 18 ? Math.min(u32(data, data.length - 4), data.length * 1032) : 0
-  const sink = new Sink(limit, false, hint)
+  const sink = new Sink(limit, false, singleMemberSize(data))
   let damaged = false
   let members = 0
   let at = 0

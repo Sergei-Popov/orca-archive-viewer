@@ -79,9 +79,11 @@ export class Output {
   readonly limit: number
   readonly truncate: boolean
 
-  constructor(limit: number, truncate: boolean) {
+  /** `hint`: the expected size, so the buffer is allocated once. */
+  constructor(limit: number, truncate: boolean, hint = 0) {
     this.limit = limit
     this.truncate = truncate
+    this.buf = new Uint8Array(Math.max(0, Math.min(hint, limit)))
   }
 
   /** How many of `n` more bytes may be written: all, or what fits when truncating. */
@@ -107,8 +109,14 @@ export class Output {
     return this.full
   }
 
-  /** The bytes so far: a view, not a copy. */
+  /**
+   * The bytes so far. The buffer is also LZMA's dictionary, so it is one piece: sized from the
+   * Index when the file has one, else grown by doubling. Its unused end was never written and
+   * costs no memory, so it is cut off (a copy) only when more than half is unused, after a
+   * hint that was far too large: then the copy frees more than it costs.
+   */
   result(): Uint8Array {
+    if (this.buf.length - this.pos > Math.max(1 << 16, this.pos)) this.buf = this.buf.slice(0, this.pos)
     return this.buf.subarray(0, this.pos)
   }
 }

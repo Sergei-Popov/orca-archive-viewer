@@ -39,6 +39,12 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- Unpacking needs less memory and keeps only what it unpacked: output is collected in blocks
+  and joined once into a buffer of its exact size instead of doubling one buffer, a refused
+  zip bomb holds at most the 512 MB limit (a 4 GiB GZIP bomb peaked at 1.7 GB, now about
+  0.8 GB), XZ sizes its buffer from the file's Index (200 MiB of logs: 633 MB peak, now
+  421 MB), and the GZIP size hint is used only when it fits one member. The 1 GB budget for
+  archives inside archives counts the buffers each level really keeps.
 - Names, titles, paths, link targets and breadcrumbs write out invisible characters as
   ⟨U+202E⟩ (format characters such as bidi controls, control characters, line separators), so a
   name like `photo` U+202E `gpj.exe` no longer reads "photoexe.jpg"; names are bidi-isolated, and

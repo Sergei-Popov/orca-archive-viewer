@@ -3,7 +3,7 @@
 
 import { DamagedError, type StreamResult, asDecodeError } from './sink'
 import { Output } from './xz/lzma2'
-import { decodeXz } from './xz/stream'
+import { decodeXz, indexedSize } from './xz/stream'
 
 /**
  * The XZ data unpacked: every Stream, joined, as `xz -d` does. `truncate` keeps the first `limit`
@@ -11,7 +11,7 @@ import { decodeXz } from './xz/stream'
  * decoded before the damage, as `xz -d` writes it before it stops.
  */
 export function unxz(data: Uint8Array, limit: number, truncate = false, partial = false): StreamResult {
-  const out = new Output(limit, truncate)
+  const out = new Output(limit, truncate, indexedSize(data))
   try {
     decodeXz(data, out)
   } catch (error) {

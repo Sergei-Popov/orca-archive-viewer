@@ -367,6 +367,7 @@ function build(
     format: 'ZIP',
     entries,
     archiveSize: bytes.length,
+    unpacked: 0,
     legacyNames,
     encoding,
     comment,

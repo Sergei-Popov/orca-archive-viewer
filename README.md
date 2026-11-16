@@ -95,11 +95,14 @@ orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the e
 - `src/codecs/` — Deflate and GZIP (fflate), Zstandard (fzstd), and bzip2 and XZ written
   here; `xz/` is a TypeScript port of [XZ Embedded](https://tukaani.org/xz/embedded.html)
   v2024-12-30 (0BSD), and its file headers name the C files and what changed. `sink.ts`
-  collects the output and refuses or cuts it at the limit. Decoders work in steps (64 KB of
-  DEFLATE input, one bzip2 block, one Zstandard frame or 64 KB of its input) and stop at the
-  first step past the limit, so a zip bomb costs about one step more than the limit; XZ
-  checks each LZMA2 chunk's size against the limit before decoding it. Zstandard windows and content sizes are checked
-  in the frame headers before fzstd allocates anything.
+  collects the output in blocks, refuses or cuts it at the limit, and joins it once into a
+  buffer of exactly its size, which briefly takes the output twice over; a one-member GZIP (by
+  its ISIZE), an XZ file (by its Index) and a Zstandard frame that records its size are sized
+  once instead. Decoders work in steps (64 KB of DEFLATE input, one bzip2 block, one Zstandard
+  frame or 64 KB of its input) and stop at the first step past the limit, so a zip bomb holds
+  at most the limit while it is refused; XZ checks each LZMA2 chunk's size against the limit
+  before decoding it. Zstandard windows and content sizes are checked in the frame headers
+  before fzstd allocates anything. `nesting.ts` counts the whole buffer each open level keeps.
 - `src/nesting.ts` — depth and memory limits for archives inside archives.
 - `src/tree.ts`, `src/content.ts`, `src/display.ts` — the tree model, content sniffing and
   formatting, all DOM-free and tested.

@@ -134,6 +134,7 @@ function single(
     format: label,
     entries: [entry],
     archiveSize: bytes.length,
+    unpacked: inner.buffer.byteLength,
     legacyNames: false,
     encoding: options.encoding,
     damaged,

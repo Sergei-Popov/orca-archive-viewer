@@ -399,6 +399,8 @@ function build(
     format,
     entries,
     archiveSize,
+    // A TAR unpacked from a stream (TAR + GZIP…) keeps the buffer it was unpacked into.
+    unpacked: bytes.length === archiveSize && format === 'TAR' ? 0 : bytes.buffer.byteLength,
     legacyNames,
     encoding,
     // A path cut at the length limit means names the archive should not have.
