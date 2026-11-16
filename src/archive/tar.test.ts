@@ -200,6 +200,33 @@ test('a hard link reads the last entry at its target path before the link, on ea
       { name: 'h', type: '1', link: 'f.txt' },
       { name: 'f.txt', data: utf8('version two\n') },
       { name: 'h2', type: '1', link: 'h' },
+test('a PAX mtime that cannot be used leaves no date instead of the header field', () => {
+  // As tarfile and GNU tar write them: the time in a PAX record, zeros in the header field.
+  const entry = (mtime: string, name: string) => [pax({ mtime }), { name, data: utf8('.'), mtime: 0 }]
+  const archive = parseTar(
+    tar([
+      ...entry('-10000000000000', 'before-date-range.txt'),
+      ...entry('10000000000000', 'after-date-range.txt'),
+      ...entry('123456789012345678', 'eighteen-digits.txt'),
+      ...entry('soon', 'not-a-number.txt'),
+      ...entry('-86400', 'day-before-1970.txt'),
+      ...entry('1700000000.25', 'fraction.txt'),
+      { name: 'header-only.txt', data: utf8('.'), mtime: 1700000000 }
+    ]),
+    'cp437'
+  )
+  assert.deepEqual(archive.entries.map((e) => [e.path, e.mtime]), [
+    ['before-date-range.txt', undefined],
+    ['after-date-range.txt', undefined],
+    ['eighteen-digits.txt', undefined],
+    ['not-a-number.txt', undefined],
+    ['day-before-1970.txt', -86400000],
+    ['fraction.txt', 1700000000250],
+    ['header-only.txt', 1700000000000]
+  ])
+  assert.equal(archive.damaged, false)
+})
+
       { name: 'h', type: '1', link: 'f.txt' },
       { name: 'h3', type: '1', link: 'h' },
       { name: 'ahead', type: '1', link: 'later.txt' },

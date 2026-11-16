@@ -309,7 +309,9 @@ export function parseTar(
         type,
         size: entrySize,
         dataStart,
-        mtime: time(mtimePax) ?? time(tarNumber(bytes, at + 136, 12)),
+        // A PAX mtime replaces the header's; one that cannot be used leaves no date, not the
+        // header's field (writers put 0 there, which would read as a believable 1970).
+        mtime: headerPax.mtime !== undefined ? time(mtimePax) : time(tarNumber(bytes, at + 136, 12)),
         mode: tarNumber(bytes, at + 100, 8) ?? 0,
         sparse
       })
