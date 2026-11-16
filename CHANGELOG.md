@@ -39,6 +39,7 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- The ZIP method "Stored" is translated (Russian "Без сжатия").
 - A 7-Zip, RAR, lzip, `.Z` or `.cab` file inside an archive shows "… archives are not
   supported" above its hex dump, as the README promised, instead of only the hex dump.
 - Unpacking needs less memory and keeps only what it unpacked: output is collected in blocks

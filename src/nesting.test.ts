@@ -7,7 +7,7 @@ import { TooLargeError, UnsupportedDataError, type UnsupportedFeature } from './
 import { concat, tar, utf8, zip } from './fixtures/build'
 import { stringsFor } from './i18n'
 import { MAX_HELD, MAX_LEVELS, TooDeepError, autoOpens, heldBytes, nestedLimit } from './nesting'
-import { describeOpenError } from './view'
+import { describeOpenError, methodLabel } from './view'
 
 const is = (type: abstract new (...args: never[]) => unknown) => (error: unknown) => error instanceof type
 
@@ -78,4 +78,11 @@ test('messages for limits name the limit, in English and Russian', () => {
       assert.equal(describeOpenError(new EntryError('unsupported', feature), t, locale), text)
     }
   }
+})
+
+test('the ZIP method "Stored" is translated; method names are not', () => {
+  assert.equal(methodLabel('Stored', stringsFor('ru')), 'Без сжатия')
+  assert.equal(methodLabel('Stored', stringsFor('en')), 'Stored')
+  assert.equal(methodLabel('Deflate', stringsFor('ru')), 'Deflate')
+  assert.equal(methodLabel(undefined, stringsFor('ru')), '')
 })

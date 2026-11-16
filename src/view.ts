@@ -88,6 +88,11 @@ function storageSet(key: string, value: string | null): void {
   }
 }
 
+/** A ZIP method as the details show it: "Stored" is a word, the others are names. */
+export function methodLabel(method: string | undefined, t: Strings): string {
+  return method === 'Stored' ? t.stored : (method ?? '')
+}
+
 /** The message for an archive that cannot be opened. */
 export function describeOpenError(error: unknown, t: Strings, locale: string): string {
   if (error instanceof UnsupportedFormatError) return fill(t.unsupported, { format: error.format })
@@ -848,7 +853,7 @@ export class ArchiveView {
       const ratio = entry.packed < entry.size ? formatRatio(entry.packed, entry.size, this.locale) : ''
       add(t.packed, ratio ? `${this.size(entry.packed)} · ${ratio}` : this.size(entry.packed), { title: this.exact(entry.packed) })
     }
-    add(t.method, entry.method ?? '')
+    add(t.method, methodLabel(entry.method, t))
     add(t.modified, formatDate(entry.mtime, this.locale))
     if (entry.mode !== undefined) add(t.mode, this.mode(entry.mode), { mono: true })
     if (entry.crc !== undefined && level.archive.kind === 'zip') add(t.crc, formatCrc(entry.crc), { mono: true })
