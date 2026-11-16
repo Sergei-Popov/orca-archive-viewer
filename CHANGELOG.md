@@ -20,12 +20,10 @@ All notable changes to this plugin are documented here. The format follows
   painting and a newer version of the file, or leaving a nested archive, stops the work
   instead of waiting for it. Large `.bz2` and `.xz` files still take several seconds to open
   (see Known limits in the README).
-- Unpacking needs less memory and keeps only what it unpacked: output is collected in blocks
-  and joined once into a buffer of its exact size instead of doubling one buffer, a refused
-  zip bomb holds at most the 512 MB limit (a 4 GiB GZIP bomb peaked at 1.7 GB, now about
-  0.8 GB), XZ sizes its buffer from the file's Index (200 MiB of logs: 633 MB peak, now
-  421 MB), and the GZIP size hint is used only when it fits one member. The 1 GB budget for
-  archives inside archives counts the buffers each level really keeps.
+- Unpacking needs less memory: a refused zip bomb holds at most the 512 MB limit (a 4 GiB GZIP
+  bomb peaked at 1.7 GB, now about 0.8 GB), a large `.xz` needs a third less (200 MiB of logs:
+  633 MB at the peak, now 421 MB), and the 1 GB budget for archives inside archives counts
+  what each level really keeps.
 
 ### Added
 
@@ -44,9 +42,9 @@ All notable changes to this plugin are documented here. The format follows
 - The file tree no longer keeps its keyboard focus ring after mouse clicks.
 - Very deep paths no longer crash the tab: a name is cut at 1,024 folders or 4,096 characters
   and the archive marked damaged (a 313-byte .tar.gz with one path 70,000 folders deep ran the
-  frame out of memory), the tree finds folders by name instead of by whole path, and all folder
-  paths of one tree together stay under 64 Mi characters. Revealing a file and keeping open
-  folders across a code page switch take time in line with the path's length, not its square.
+  frame out of memory), and thousands of such entries no longer run it out of memory either.
+  Revealing a file and keeping folders open across a code page switch stay quick for long
+  paths.
 - Names, titles, paths, link targets and breadcrumbs write out invisible characters as
   ⟨U+202E⟩ (bidi controls, zero-width spaces and other invisible format characters, control
   characters, line separators), so a name like `photo` U+202E `gpj.exe` no longer reads
@@ -79,8 +77,7 @@ All notable changes to this plugin are documented here. The format follows
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
 - A `.zst` or `.tar.zst` frame that records a content size over 256 MB (what `zstd file.tar`
-  writes) opens instead of being called damaged, and smaller ones open several times faster:
-  fzstd compared its output buffer with `== 1`, which turned the buffer into a string.
+  writes) opens instead of being called damaged, and smaller ones open several times faster.
 - A file that starts with 1 KB of zeros and then has data (ext4 and other disk images, ISOs) is
   the single file of its `.gz`, `.xz` or `.zst` and a hex dump inside an archive, not an empty
   TAR; zeros are an empty TAR only when nothing but zeros or a TAR header follows.

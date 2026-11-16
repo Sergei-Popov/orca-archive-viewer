@@ -51,7 +51,9 @@ unpacked.
 
 A damaged or cut-off archive shows what could be read with a notice: the entries before the
 damage, or for a `.gz`, `.bz2`, `.xz` or `.zst` of one file, the part of it before the damage
-(GZIP CRC-32 and size, bzip2 block CRCs and XZ checks are checked). A ZIP cut off before its
+(GZIP CRC-32 and size, bzip2 block CRCs and XZ checks are checked). For a damaged `.xz` the
+part can end with a little of the damaged block, as `xz -d` writes it; for a cut-off one it is
+an exact start of the file. A ZIP cut off before its
 central directory is read from the local headers in front of the cut. A ZIP entry that unpacks
 to more than the size its archive records is damaged, whatever its method.
 
@@ -140,4 +142,5 @@ Branches follow git-flow: `feature/*` from `develop`, releases through `release/
 
 MIT © Sergei Popov. Vendored code keeps its own terms: fflate and fzstd — MIT (see
 `vendor/*/LICENSE`). The XZ decoder in `src/codecs/xz/` is ported from XZ Embedded by Lasse
-Collin and Igor Pavlov, released under the BSD Zero Clause License (0BSD).
+Collin and Igor Pavlov, released under the BSD Zero Clause License (0BSD); its licence text is
+in `src/codecs/xz/LICENSE`.

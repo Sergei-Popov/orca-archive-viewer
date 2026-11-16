@@ -68,7 +68,8 @@ shasum -a 256 ../vendor/*/*.mjs
 v2024-12-30 (git commit `ae63ae3a36ed01724674e8f3d750dc47bf125410`, mirrored at
 https://github.com/tukaani-project/xz-embedded) by Lasse Collin and Igor Pavlov, released under
 the BSD Zero Clause License (0BSD). 0BSD asks for no notice; the authors are named anyway, here,
-in the README's License section and in each ported file's header.
+in the README's License section and in each ported file's header, and `src/codecs/xz/LICENSE`
+holds the upstream licence text (XZ Embedded's `COPYING`).
 
 | Ported file               | From (`linux/lib/xz/`)                         |
 | ------------------------- | ---------------------------------------------- |
