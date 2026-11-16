@@ -138,7 +138,7 @@ button, select, input { font: inherit; color: inherit; }
 }
 .av-cols span:not(:first-child), .av-cell { text-align: right; }
 .av-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; outline: none; }
-.av-scroll:focus-visible { box-shadow: inset 0 0 0 1px var(--ring); }
+.av-scroll:focus-visible:not([data-pointer]) { box-shadow: inset 0 0 0 1px var(--ring); }
 .av-rows { position: absolute; left: 0; right: 0; top: 0; }
 .av-row {
   display: grid; grid-template-columns: 16px 16px var(--columns); gap: 0 8px; align-items: center;

@@ -9,6 +9,7 @@ import { DamagedError, TooLargeError, UnsupportedDataError, type UnsupportedFeat
 import { type ContentKind, IMAGE_TYPES, classify, extension, hexDump, imageType, nameKind } from './content'
 import { formatBytes, formatCrc, formatDate, formatMode, formatRatio, formatShortDate, formatSize } from './display'
 import { append, h, highlight, svg } from './dom'
+import { pointerFocus } from './focus'
 import { type Strings, fill } from './i18n'
 import { type IconName, icon } from './icons'
 import { TooDeepError, autoOpens, heldBytes, nestedLimit } from './nesting'
@@ -603,6 +604,7 @@ export class ArchiveView {
       else if (this.canOpen(row.node)) void this.openNested(row.node)
     })
     this.scroll.addEventListener('keydown', (event) => this.onTreeKey(event))
+    pointerFocus(this.scroll)
 
     this.filterInput.addEventListener('input', () => this.setFilter(this.filterInput.value))
     this.filterInput.addEventListener('keydown', (event) => {
