@@ -57,6 +57,11 @@ export type OpenOptions = {
   limit?: number
 }
 
+/** The name of an archive format the viewer knows but does not open (7-Zip, RAR…), or null. */
+export function unsupportedFormat(bytes: Uint8Array): string | null {
+  return UNSUPPORTED[detect(bytes)] ?? null
+}
+
 /** True for bytes the viewer can open as an archive (used for nested archives). */
 export function isArchive(bytes: Uint8Array): boolean {
   const magic = detect(bytes)

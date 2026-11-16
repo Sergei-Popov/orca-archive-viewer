@@ -31,7 +31,9 @@ Archive Viewer has:
 
 It is read-only and offline: no capabilities, no network, the file is never modified.
 
-**Not supported.** 7-Zip, RAR, lzip, `.Z` and `.cab` archives show a message saying so.
+**Not supported.** 7-Zip, RAR, lzip, `.Z` and `.cab` archives inside an archive, or opened
+under another archive's extension, show a message saying so above their first bytes; Orca
+itself opens files with those extensions, so they do not reach Archive Viewer.
 Encrypted ZIP entries and other ZIP methods (LZMA, PPMd, Deflate64…) are listed but not
 unpacked.
 

@@ -941,6 +941,8 @@ export class ArchiveView {
       if (result.truncated) parts.push(h('p', { className: 'av-note' }, fill(t.textCut, { size: this.size(result.bytes.length) })))
       parts.push(this.textBody(content.decoded.text, actions))
     } else {
+      // An archive in a format the viewer does not open says so, above its first bytes.
+      if (content.kind === 'unsupported') parts.push(this.callout('archive', 'av-warn', fill(t.unsupported, { format: content.format })))
       const shown = Math.min(result.bytes.length, HEX_LIMIT)
       parts.push(h('p', { className: 'av-note' }, fill(t.binary, { size: this.size(shown) })))
       parts.push(h('pre', { className: 'av-hex' }, hexDump(result.bytes, HEX_LIMIT)))

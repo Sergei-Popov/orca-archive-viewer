@@ -55,3 +55,21 @@ test('nameKind picks the tree icon from the name', () => {
   assert.equal(nameKind('MANIFEST.MF'), 'text')
   assert.equal(nameKind('app.exe'), 'file')
 })
+
+test('7-Zip, RAR, lzip, compress and Cabinet files inside an archive are classed as unsupported archives', () => {
+  const cases: [string, number[], string][] = [
+    ['backup.7z', [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0, 4], '7-Zip'],
+    ['old.rar', [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 1, 0], 'RAR'],
+    ['logs.tar.lz', [0x4c, 0x5a, 0x49, 0x50, 1, 0x0c], 'lzip'],
+    ['README.md.Z', [0x1f, 0x9d, 0x90, 0x23], 'compress (.Z)'],
+    ['setup.cab', [0x4d, 0x53, 0x43, 0x46, 0, 0, 0, 0], 'Cabinet (.cab)']
+  ]
+  for (const [name, start, format] of cases) {
+    const bytes = new Uint8Array(64)
+    bytes.set(start)
+    assert.deepEqual(classify(name, bytes, false, 'windows-1252'), { kind: 'unsupported', format }, name)
+    // By its bytes, not its name.
+    assert.deepEqual(classify('renamed.bin', bytes, false, 'windows-1252'), { kind: 'unsupported', format }, name)
+  }
+  assert.deepEqual(classify('notes.txt', new TextEncoder().encode('plain text'), false, 'windows-1252').kind, 'text')
+})

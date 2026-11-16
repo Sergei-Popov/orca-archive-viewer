@@ -39,6 +39,8 @@ All notable changes to this plugin are documented here. The format follows
 - A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
   `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
   already did, instead of only "The archive is damaged".
+- A 7-Zip, RAR, lzip, `.Z` or `.cab` file inside an archive shows "… archives are not
+  supported" above its hex dump, as the README promised, instead of only the hex dump.
 - Unpacking needs less memory and keeps only what it unpacked: output is collected in blocks
   and joined once into a buffer of its exact size instead of doubling one buffer, a refused
   zip bomb holds at most the 512 MB limit (a 4 GiB GZIP bomb peaked at 1.7 GB, now about
