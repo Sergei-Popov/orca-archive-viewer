@@ -43,6 +43,8 @@ All notable changes to this plugin are documented here. The format follows
   painting and a newer version of the file, or leaving a nested archive, stops the work
   instead of waiting for it. Large `.bz2` and `.xz` files still take several seconds to open
   (see Known limits in the README).
+- `vendor/README.md` lists each vendored file's npm source, SHA-256 sums and patches, how to
+  re-check them, and the XZ Embedded port with its 0BSD credit.
 - The README gave Orca's limit for opening a file in a plugin editor as 64 MB; Orca 1.4.258
   opens files of at most 50 MB there. Save… still goes up to 64 MB.
 - The ZIP method "Stored" is translated (Russian "Без сжатия").
