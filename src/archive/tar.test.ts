@@ -1,6 +1,8 @@
 import { assert, test } from 'orca/testing'
 import { concat, pax, tar, tarHeader, utf8 } from '../fixtures/build'
-import { base64, smallTarBz2, smallTarXz, smallTarZst } from '../fixtures/samples'
+import { bzip2 } from '../fixtures/bzip2'
+import { base64, smallTarXz } from '../fixtures/samples'
+import { zstd } from '../fixtures/zstd'
 import { EntryError } from './model'
 import { openArchive } from './open'
 import { parsePax, parseTar } from './tar'
@@ -81,12 +83,17 @@ test('parsePax reads length-prefixed records', () => {
 })
 
 test('tar inside bzip2, xz and zstd', async () => {
-  for (const [sample, format] of [
-    [smallTarBz2, 'TAR + BZIP2'],
-    [smallTarXz, 'TAR + XZ'],
-    [smallTarZst, 'TAR + ZSTD']
-  ]) {
-    const archive = await openArchive(base64(sample), { encoding: 'cp437' })
+  const small = tar([
+    { name: 'docs/', type: '5', mode: 0o755 },
+    pax({ mtime: '1700000000.25' }),
+    { name: 'docs/readme.txt', data: utf8('hello from tar\n') }
+  ])
+  for (const [data, format] of [
+    [bzip2(small), 'TAR + BZIP2'],
+    [base64(smallTarXz), 'TAR + XZ'],
+    [zstd(small), 'TAR + ZSTD']
+  ] as const) {
+    const archive = await openArchive(data, { encoding: 'cp437' })
     assert.equal(archive.format, format)
     assert.deepEqual(archive.entries.map((e) => e.path), ['docs', 'docs/readme.txt'])
     assert.equal(text(archive.read(archive.entries[1], 100).bytes), 'hello from tar\n')
