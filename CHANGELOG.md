@@ -35,7 +35,7 @@ All notable changes to this plugin are documented here. The format follows
   instead of showing the packed bytes. `tools/cli-crosscheck.sh` compares the tar reader with
   Python's tarfile on archives from macOS tar, GNU tar and tarfile.
 - `vendor/README.md` lists each vendored file's npm source, SHA-256 sums and patches, how to
-  re-check them, and the XZ Embedded port with its 0BSD credit.
+  re-check them, and the XZ Embedded port with its authors and 0BSD licence.
 - README: a Known limits list (unpacking on the tab's thread, Zstandard checksums, memory
   while joining, the path cap).
 

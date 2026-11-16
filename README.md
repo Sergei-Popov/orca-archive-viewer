@@ -124,7 +124,7 @@ orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the e
 - `src/fixtures/` — builds the tests' archives in code, with small test-only bzip2, XZ and
   Zstandard encoders.
 - `vendor/` — the two vendored libraries; `vendor/README.md` gives their sources, SHA-256
-  sums, patches and how to re-check them, and credits the XZ Embedded port.
+  sums, patches and how to re-check them, and names the authors of the XZ Embedded port.
 - `vendor/fflate/` — [fflate](https://github.com/101arrowz/fflate) 0.8.3 (MIT).
 - `vendor/fzstd/` — [fzstd](https://github.com/101arrowz/fzstd) 0.1.1 (MIT), patched (marked
   "Archive Viewer patch") so a streaming window slides without moving all of it after every
