@@ -63,21 +63,35 @@ function time(seconds: number | null): number | undefined {
   return Math.abs(ms) <= 8.64e15 ? ms : undefined
 }
 
-/** PAX records: "<length> <key>=<value>\n". */
-export function parsePax(data: Uint8Array): Record<string, string> {
-  const out: Record<string, string> = {}
+export type PaxRecords = { records: [string, string][]; damaged: boolean }
+
+/**
+ * PAX records, "<length> <key>=<value>\n" with the length counting the whole record, in order.
+ * A NUL ends them, as in Python's tarfile. A length with a leading zero, over 20 digits or too
+ * short for its own record, or a record without its "=" or newline, is damage: parsing stops
+ * there, so a crafted length cannot make the scan go back over the same bytes.
+ */
+export function parsePax(data: Uint8Array): PaxRecords {
+  const records: [string, string][] = []
+  const decoder = new TextDecoder()
   let at = 0
-  while (at < data.length) {
-    let space = at
-    while (space < data.length && data[space] !== 0x20) space++
-    const length = Number(new TextDecoder().decode(data.subarray(at, space)))
-    if (!Number.isFinite(length) || length <= 0 || at + length > data.length) break
-    const record = new TextDecoder().decode(data.subarray(space + 1, at + length - 1))
-    const eq = record.indexOf('=')
-    if (eq > 0) out[record.slice(0, eq)] = record.slice(eq + 1)
-    at += length
+  while (at < data.length && data[at] !== 0) {
+    let p = at
+    let length = 0
+    while (p < data.length && p - at < 21 && data[p] >= 0x30 && data[p] <= 0x39) length = length * 10 + data[p++] - 0x30
+    const digits = p - at
+    const end = at + length
+    // The shortest record is "<digits> k=\n".
+    const framed =
+      digits > 0 && digits <= 20 && data[at] !== 0x30 && data[p] === 0x20 && length >= digits + 4 && end <= data.length
+    if (!framed || data[end - 1] !== 0x0a) return { records, damaged: true }
+    const record = data.subarray(p + 1, end - 1)
+    const eq = record.indexOf(0x3d)
+    if (eq <= 0) return { records, damaged: true }
+    records.push([decoder.decode(record.subarray(0, eq)), decoder.decode(record.subarray(eq + 1))])
+    at = end
   }
-  return out
+  return { records, damaged: false }
 }
 
 /** `archiveSize` and `streamDamaged`: the file's own size, and damage found while unpacking it,
@@ -133,10 +147,12 @@ export function parseTar(
       longName = cstring(data, 0, data.length)
     } else if (type === 'K') {
       longLink = cstring(data, 0, data.length)
-    } else if (type === 'x') {
-      pax = parsePax(data)
-    } else if (type === 'g') {
-      globalPax = { ...globalPax, ...parsePax(data) }
+    } else if (type === 'x' || type === 'g') {
+      const parsed = parsePax(data)
+      damaged ||= parsed.damaged
+      // fromEntries defines keys as own properties: a "__proto__" record stays a record.
+      if (type === 'x') pax = Object.fromEntries(parsed.records)
+      else globalPax = { ...globalPax, ...Object.fromEntries(parsed.records) }
     } else if (type !== 'V' && type !== 'M') {
       let nameBytes = longName ?? cstring(bytes, at, 100)
       if (!longName && ustar && !gnu && bytes[at + 345] !== 0) {

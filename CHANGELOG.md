@@ -23,6 +23,9 @@ All notable changes to this plugin are documented here. The format follows
 - TAR dates before 1970 that GNU tar stores in base-256 show their real date instead of
   "Invalid Date", a date of 0 shows as 1970-01-01 instead of none, and a date past what a
   calendar can show is left out.
+- A PAX header with a malformed length field (a leading zero, over 20 digits, too short for its
+  record) marks the archive damaged and stops there, instead of rescanning the field: a 288-byte
+  crafted `.tar.gz` used to freeze the tab for 20 seconds.
 
 ## [0.1.0] - 2026-11-14
 

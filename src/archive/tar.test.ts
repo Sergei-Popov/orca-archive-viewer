@@ -78,8 +78,37 @@ test('legacy names re-decode', () => {
   assert.notEqual(archive.withEncoding('windows-1251').entries[0].path, 'Привет.txt')
 })
 
-test('parsePax reads length-prefixed records', () => {
-  assert.deepEqual(parsePax(utf8('18 path=a/b/c.txt\n11 size=42\n')), { path: 'a/b/c.txt', size: '42' })
+test('parsePax reads length-prefixed records in order, up to a NUL', () => {
+  assert.deepEqual(parsePax(utf8('18 path=a/b/c.txt\n11 size=42\n6 k=v\n5 e=\n\0\0\0')), {
+    records: [['path', 'a/b/c.txt'], ['size', '42'], ['k', 'v'], ['e', '']],
+    damaged: false
+  })
+})
+
+test('parsePax stops at a length with a leading zero, too many digits or too small, and marks damage', () => {
+  const good = '11 size=42\n'
+  for (const bad of ['011 size=42\n', '0'.repeat(30) + '11 size=42\n', '3 k=v\n', '4 k=\n', ' 11 size=42\n', '11 size=42 ', '11 size 42\n', '11size=42\n\n', '99 k=v\n']) {
+    assert.deepEqual(parsePax(utf8(good + bad + good)), { records: [['size', '42']], damaged: true }, JSON.stringify(bad))
+  }
+  assert.deepEqual(parsePax(utf8('1'.repeat(21) + ' k=v\n')), { records: [], damaged: true })
+  // A zero-padded length used to make each record rescan the padding: 288 B froze a tab for 20 s.
+  const started = Date.now()
+  const archive = parseTar(
+    tar([{ name: 'PaxHeader', type: 'x', data: utf8('0'.repeat(1 << 20) + '1 x') }, { name: 'a.txt', data: utf8('after') }]),
+    'cp437'
+  )
+  assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`)
+  assert.equal(archive.damaged, true)
+  assert.deepEqual(archive.entries.map((e) => e.path), ['a.txt'])
+  // The same for a global header.
+  const global = parseTar(tar([{ name: 'g', type: 'g', data: utf8('0'.repeat(1 << 20) + '1 x') }, { name: 'b.txt' }]), 'cp437')
+  assert.equal(global.damaged, true)
+  assert.deepEqual(global.entries.map((e) => e.path), ['b.txt'])
+})
+
+test('a PAX record named __proto__ is a record, not a prototype', () => {
+  const archive = parseTar(tar([pax([['__proto__', 'x'], ['path', 'real.txt']]), { name: 'fake', data: utf8('x') }]), 'cp437')
+  assert.deepEqual(archive.entries.map((e) => e.path), ['real.txt'])
 })
 
 test('tar inside bzip2, xz and zstd', async () => {
