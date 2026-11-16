@@ -48,9 +48,11 @@ All notable changes to this plugin are documented here. The format follows
   paths of one tree together stay under 64 Mi characters. Revealing a file and keeping open
   folders across a code page switch take time in line with the path's length, not its square.
 - Names, titles, paths, link targets and breadcrumbs write out invisible characters as
-  ⟨U+202E⟩ (format characters such as bidi controls, control characters, line separators), so a
-  name like `photo` U+202E `gpj.exe` no longer reads "photoexe.jpg"; names are bidi-isolated, and
-  Save… suggests the name without those characters.
+  ⟨U+202E⟩ (bidi controls, zero-width spaces and other invisible format characters, control
+  characters, line separators), so a name like `photo` U+202E `gpj.exe` no longer reads
+  "photoexe.jpg"; names are bidi-isolated, and Save… suggests the name without those
+  characters. Zero-width joiners and non-joiners (Persian and Hindi words, emoji sequences) and
+  soft hyphens are text and stay as they are.
 - The filter highlight marks the right characters after a letter whose lowercase is longer,
   such as Turkish İ ("İstanbul notları" with "notlar").
 - A name a ZIP lists more than once shows every copy as its own row, marked "copy 1 of 2"
