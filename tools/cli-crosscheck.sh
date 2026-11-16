@@ -2,8 +2,9 @@
 # Cross-checks the decoders with the real bzip2, zstd and xz, both ways. The tools run here, not
 # in src/: the orca.dev review reads process spawning in a plugin as exfiltration, tests included.
 #   1. Writes plain inputs and packs them with each installed tool (levels, checks, windows,
-#      block sizes, joined streams, padding, cut and damaged copies) into .test-files/cli/, which
-#      git ignores, listed in cases.tsv with the outcome each must have.
+#      dictionaries, block sizes, joined streams, padding, cut and damaged copies, and options the
+#      viewer refuses) into .test-files/cli/, which git ignores, listed in cases.tsv with the
+#      outcome each must have.
 #   2. Runs `orca plugin test .`: src/codecs/cli.test.ts unpacks every listed file with the
 #      plugin's decoders and writes the test encoders' output to .test-files/cli/ours/.
 #   3. Unpacks those with the tools and compares them with the plain inputs.
@@ -79,6 +80,42 @@ if has zstd; then
   add zstd/two-frames.zst plain/text-runs.bin
   head -c $(($(size zstd/letters.19.zst) / 2)) zstd/letters.19.zst > zstd/letters.cut.zst
   add zstd/letters.cut.zst plain/letters.bin damaged
+fi
+
+if has xz; then
+  mkdir -p xz
+  versions+=("$(xz --version | head -n 1)")
+  # -T1 keeps one Block; the later -T2 writes Blocks with their sizes in the headers.
+  settings=('-0' '-6' '-9e' '-1 -C none' '-6 -C crc32' '-3 --block-size=40000' '-3 -T2 --block-size=50000'
+    '--lzma2=dict=4KiB,lc=4,pb=0' '--lzma2=lc=0,lp=4,mode=fast')
+  for n in "${inputs[@]}"; do
+    for options in "${settings[@]}"; do
+      label=$(echo "$options" | tr -c 'a-zA-Z0-9\n' '_')
+      # shellcheck disable=SC2086
+      xz -q -c -T1 $options < "plain/$n.bin" > "xz/$n.$label.xz"
+      add "xz/$n.$label.xz" "plain/$n.bin"
+    done
+  done
+  cat xz/text._6.xz xz/runs._0.xz > xz/two-streams.xz
+  add xz/two-streams.xz plain/text-runs.bin
+  { cat xz/text._6.xz; head -c 8 /dev/zero; cat xz/runs._0.xz; head -c 4 /dev/zero; } > xz/padded-streams.xz
+  add xz/padded-streams.xz plain/text-runs.bin
+  { cat xz/text._6.xz; head -c 3 /dev/zero; } > xz/bad-padding.xz
+  add xz/bad-padding.xz plain/text.bin damaged
+  head -c $(($(size xz/letters._6.xz) / 2)) xz/letters._6.xz > xz/letters.cut.xz
+  add xz/letters.cut.xz plain/letters.bin damaged
+  cp xz/letters._6.xz xz/letters.flip.xz
+  flip xz/letters.flip.xz $(($(size xz/letters.flip.xz) / 2))
+  add xz/letters.flip.xz plain/letters.bin damaged
+  # Valid files the viewer does not decode.
+  xz -q -c -T1 -C sha256 < plain/text.bin > xz/text.sha256.xz
+  add xz/text.sha256.xz plain/text.bin unsupported:xz-options
+  xz -q -c -T1 --x86 --lzma2 < plain/text.bin > xz/text.x86.xz
+  add xz/text.x86.xz plain/text.bin unsupported:xz-options
+  xz -q -c -T1 --delta=dist=4 --lzma2 < plain/text.bin > xz/text.delta.xz
+  add xz/text.delta.xz plain/text.bin unsupported:xz-options
+  xz -q -c -T1 --lzma2=dict=65MiB,mode=fast < plain/text.bin > xz/text.dict65m.xz
+  add xz/text.dict65m.xz plain/text.bin unsupported:xz-dictionary
 fi
 
 if [[ ${#versions[@]} -eq 0 ]]; then

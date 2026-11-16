@@ -8,6 +8,7 @@
 import { assert, test } from 'orca/testing'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { bzip2 } from '../fixtures/bzip2'
+import { xz, type XzOptions } from '../fixtures/xz'
 import { zstd, type ZstdOptions } from '../fixtures/zstd'
 import { bunzip2 } from './bzip2'
 import { DamagedError, UnsupportedDataError } from './sink'
@@ -31,14 +32,14 @@ function equal(a: Uint8Array, b: Uint8Array): boolean {
   return true
 }
 
-async function unpack(file: string, data: Uint8Array): Promise<Uint8Array> {
+function unpack(file: string, data: Uint8Array): Uint8Array {
   if (file.endsWith('.bz2')) return bunzip2(data, LIMIT).bytes
   if (file.endsWith('.zst')) return unzstd(data, LIMIT).bytes
-  if (file.endsWith('.xz')) return (await unxz(data, LIMIT)).bytes
+  if (file.endsWith('.xz')) return unxz(data, LIMIT).bytes
   throw new Error(`no decoder for ${file}`)
 }
 
-test('files made by bzip2, zstd and xz unpack here (tools/cli-crosscheck.sh)', async () => {
+test('files made by bzip2, zstd and xz unpack here (tools/cli-crosscheck.sh)', () => {
   if (!prepared()) return
   const failures: string[] = []
   const tally = new Map<string, number>()
@@ -46,7 +47,7 @@ test('files made by bzip2, zstd and xz unpack here (tools/cli-crosscheck.sh)', a
     const [packed, plain, expected] = line.split('\t')
     let outcome: string
     try {
-      outcome = equal(await unpack(packed, readFileSync(DIR + packed)), readFileSync(DIR + plain)) ? 'ok' : 'wrong output'
+      outcome = equal(unpack(packed, readFileSync(DIR + packed)), readFileSync(DIR + plain)) ? 'ok' : 'wrong output'
     } catch (error) {
       if (error instanceof UnsupportedDataError) outcome = `unsupported:${error.feature}`
       else if (error instanceof DamagedError) outcome = 'damaged'
@@ -67,7 +68,16 @@ const ZSTD_OPTIONS: [string, ZstdOptions][] = [
   ['blocks1000', { windowLog: 12, blockSize: 1000 }]
 ]
 
-test('the test encoders write what bzip2 and zstd read (tools/cli-crosscheck.sh)', () => {
+const XZ_OPTIONS: [string, XzOptions][] = [
+  ['default', {}],
+  ['none', { check: 'none' }],
+  ['crc32-sizes', { check: 'crc32', sizes: true }],
+  ['blocks', { blockSize: 100000, chunkSize: 7000 }],
+  ['lc0lp4pb0', { lc: 0, lp: 4, pb: 0 }],
+  ['dict4k', { dictSize: 4096, lc: 4, pb: 4 }]
+]
+
+test('the test encoders write what bzip2, zstd and xz read (tools/cli-crosscheck.sh)', () => {
   if (!prepared()) return
   mkdirSync(DIR + 'ours', { recursive: true })
   const rows: string[] = []
@@ -83,6 +93,9 @@ test('the test encoders write what bzip2 and zstd read (tools/cli-crosscheck.sh)
       for (const tables of [2, 6]) write(`${name}.t${tables}.bz2`, bzip2(bytes, { level: 1, tables }), plain, 'bzip2')
     }
     for (const [label, options] of ZSTD_OPTIONS) write(`${name}.${label}.zst`, zstd(bytes, options), plain, 'zstd')
+    for (const [label, options] of XZ_OPTIONS) {
+      if (label === 'default' || bytes.length <= 300000) write(`${name}.${label}.xz`, xz(bytes, options), plain, 'xz')
+    }
   }
   writeFileSync(DIR + 'ours/cases.tsv', rows.join('\n') + '\n')
   assert.ok(rows.length > 0)

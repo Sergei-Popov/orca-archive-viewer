@@ -2,7 +2,7 @@ import { assert, test } from 'orca/testing'
 import { gzipSync } from '../../vendor/fflate/fflate.mjs'
 import { DamagedError, UnsupportedDataError } from '../codecs/sink'
 import { concat, tar, utf8, zip } from '../fixtures/build'
-import { base64, bigDictXz } from '../fixtures/samples'
+import { xz } from '../fixtures/xz'
 import { detect } from './detect'
 import { NotArchiveError, UnsupportedFormatError, innerName, isArchive, openArchive } from './open'
 
@@ -78,7 +78,7 @@ test('damage found while unpacking GZIP marks the archive damaged and keeps what
 
 test('a valid XZ file the decoder cannot take is refused as unsupported', async () => {
   await assert.rejects(
-    () => openArchive(base64(bigDictXz), { encoding: 'cp437' }),
+    () => openArchive(xz(utf8('hello xz\n'), { dictSize: 1536 << 20 }), { encoding: 'cp437' }),
     (e: unknown) => e instanceof UnsupportedDataError && e.feature === 'xz-dictionary'
   )
 })

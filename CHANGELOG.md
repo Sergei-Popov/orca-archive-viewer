@@ -13,6 +13,9 @@ All notable changes to this plugin are documented here. The format follows
   style, made from fictional demo archives (`tools/make-listing-samples.py`,
   `tools/listing.json`); a full-bleed plugin and tab icon; the description fits orca.dev's
   300 characters.
+- XZ is decoded by a TypeScript port of XZ Embedded (0BSD) instead of its WebAssembly build, so
+  the plugin carries no WebAssembly. The same files open, with the same limits; damage that the
+  WebAssembly build let through is now reported, as `xz -d` reports it.
 
 ### Fixed
 
