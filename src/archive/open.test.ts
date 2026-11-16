@@ -82,3 +82,22 @@ test('a valid XZ file the decoder cannot take is refused as unsupported', async 
     (e: unknown) => e instanceof UnsupportedDataError && e.feature === 'xz-dictionary'
   )
 })
+
+test('zeros at the start are an empty tar only when nothing else follows', async () => {
+  // Like an ext4 image: 1 KiB of zeros, then a superblock and data.
+  const image = concat(new Uint8Array(1024), utf8('superblock'), new Uint8Array(3000).fill(7))
+  assert.equal(detect(image), 'unknown')
+  assert.equal(isArchive(image), false)
+  for (const packed of [gzipSync(image), xz(image)]) {
+    const archive = await openArchive(packed, { encoding: 'cp437', name: 'disk.img.gz' })
+    assert.equal(archive.kind, 'single')
+    assert.equal(archive.entries[0].size, image.length)
+  }
+  const empty = new Uint8Array(10240)
+  assert.equal(detect(empty), 'tar')
+  const archive = await openArchive(gzipSync(empty), { encoding: 'cp437' })
+  assert.equal(archive.format, 'TAR + GZIP')
+  assert.deepEqual(archive.entries, [])
+  // An archive with zeros before a zip stays a zip.
+  assert.equal(detect(concat(new Uint8Array(2048), zip([{ name: 'a' }]))), 'zip')
+})

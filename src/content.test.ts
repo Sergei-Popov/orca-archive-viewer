@@ -31,6 +31,10 @@ test('classify spots nested archives', () => {
   assert.equal(classify('inner.zip', zip([]), false, 'windows-1252').kind, 'archive')
   assert.equal(classify('a.txt', new TextEncoder().encode('text'), false, 'windows-1252').kind, 'text')
   assert.equal(classify('a.bin', bytes(0, 1, 2), false, 'windows-1252').kind, 'binary')
+  // A disk image starts with zeros, then its data: binary, not an empty tar.
+  const image = new Uint8Array(4096)
+  image[1080] = 0x53
+  assert.equal(classify('rootfs.ext4', image, false, 'windows-1252').kind, 'binary')
 })
 
 test('hexDump writes offset, hex and ASCII columns', () => {

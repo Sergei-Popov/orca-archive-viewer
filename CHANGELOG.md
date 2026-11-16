@@ -36,6 +36,9 @@ All notable changes to this plugin are documented here. The format follows
   crafted `.tar.gz` used to freeze the tab for 20 seconds.
 - A TAR hard link reads the file it was made from, the last entry at its target path before the
   link, as tar does, instead of a later file with the same path in an appended archive.
+- A file that starts with 1 KB of zeros and then has data (ext4 and other disk images, ISOs) is
+  the single file of its `.gz`, `.xz` or `.zst` and a hex dump inside an archive, not an empty
+  TAR; zeros are an empty TAR only when nothing else follows.
 
 ## [0.1.0] - 2026-11-14
 
