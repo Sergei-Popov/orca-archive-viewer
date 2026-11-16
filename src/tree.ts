@@ -2,7 +2,7 @@
 // created from paths, folders sum their files, and children sort folders first, then by name in
 // natural order ("file2" before "file10").
 
-import type { Entry } from './archive/model'
+import type { Archive, Entry } from './archive/model'
 
 export type Node = {
   name: string
@@ -133,6 +133,15 @@ export function buildTree(entries: readonly Entry[], options: { duplicates?: boo
   }
   total(root)
   return root
+}
+
+/**
+ * The tree the view shows for `archive`, on opening and after every code page switch. A ZIP can
+ * list a name twice, and readers differ on which copy wins, so every copy is shown; tar extracts
+ * the last.
+ */
+export function archiveTree(archive: Pick<Archive, 'entries' | 'kind'>): Node {
+  return buildTree(archive.entries, { duplicates: archive.kind === 'zip' })
 }
 
 function fileNode(entry: Entry, name: string, path: string): Node {

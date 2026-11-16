@@ -7,6 +7,7 @@ import { DamagedError } from '../codecs/sink'
 import { EntryError } from './model'
 import { decodeLegacy } from './names'
 import { dosTime, parseZip } from './zip'
+import { archiveTree, findNode } from '../tree'
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 const cp866 = (s: string) => Uint8Array.from(s, (c) => {
@@ -64,6 +65,40 @@ test('names: UTF-8 flag, valid UTF-8, and legacy code pages with re-decoding', (
   assert.equal(western.entries[2].path, decodeLegacy(cp866('Отчет.doc'), 'cp437'))
   assert.equal(western.entries[2].legacy, true)
   assert.equal(western.entries[0].legacy, false)
+})
+
+test('a code page switch keeps every copy of a name a ZIP lists twice', () => {
+  const name = cp866('Отчет/дубль.txt')
+  const archive = parseZip(
+    zip([
+      { name, data: utf8('first'), host: 0 },
+      { name: 'readme.txt', data: utf8('hi') },
+      { name, data: utf8('second copy'), host: 0 }
+    ]),
+    'cp437'
+  )
+  assert.equal(archive.legacyNames, true)
+  const copies = (tree: ReturnType<typeof archiveTree>, folder: string) =>
+    findNode(tree, folder)!.children.map((node) => [node.name, node.size, node.duplicate])
+  const before = archiveTree(archive)
+  assert.equal(before.files, 3)
+  const western = decodeLegacy(cp866('Отчет'), 'cp437')
+  assert.deepEqual(copies(before, western), [
+    [decodeLegacy(cp866('дубль.txt'), 'cp437'), 5, { copy: 1, copies: 2 }],
+    [decodeLegacy(cp866('дубль.txt'), 'cp437'), 11, { copy: 2, copies: 2 }]
+  ])
+  for (const encoding of ['cp866', 'windows-1251', 'cp437'] as const) {
+    const switched = archive.withEncoding(encoding)
+    const tree = archiveTree(switched)
+    assert.equal(tree.files, 3, encoding)
+    const folder = decodeLegacy(cp866('Отчет'), encoding)
+    const file = decodeLegacy(cp866('дубль.txt'), encoding)
+    assert.deepEqual(copies(tree, folder), [
+      [file, 5, { copy: 1, copies: 2 }],
+      [file, 11, { copy: 2, copies: 2 }]
+    ], encoding)
+  }
+  assert.deepEqual(copies(archiveTree(archive.withEncoding('cp866')), 'Отчет').map((row) => row[0]), ['дубль.txt', 'дубль.txt'])
 })
 
 test('a UTF-8 flag on bytes that are not UTF-8 falls back to the code page', () => {

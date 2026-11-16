@@ -18,7 +18,7 @@ import {
   type Node as TreeNode,
   type Row,
   ancestors,
-  buildTree,
+  archiveTree,
   findNode,
   folderPaths,
   renamedPaths,
@@ -293,8 +293,7 @@ export class ArchiveView {
   }
 
   private newLevel(archive: Archive, label: string, fresh: boolean): Level {
-    // A ZIP can list a name twice, and readers differ on which copy wins: show every copy.
-    const root = buildTree(archive.entries, { duplicates: archive.kind === 'zip' })
+    const root = archiveTree(archive)
     const level: Level = {
       archive,
       label,
@@ -571,7 +570,7 @@ export class ArchiveView {
     const renamed = renamedPaths(level.archive.entries, archive.entries)
     const rename = (path: string) => renamed.get(path) ?? path
     level.archive = archive
-    level.root = buildTree(archive.entries)
+    level.root = archiveTree(archive)
     level.expanded = new Set([...level.expanded].map(rename))
     if (level.selected) level.selected = rename(level.selected)
     level.scrollTop = this.scroll.scrollTop
