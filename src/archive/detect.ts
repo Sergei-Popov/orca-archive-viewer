@@ -25,12 +25,34 @@ export function detect(bytes: Uint8Array): Magic {
   if (starts(bytes, [0x28, 0xb5, 0x2f, 0xfd])) return 'zstd'
   if (starts(bytes, [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) return '7z'
   if (starts(bytes, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07])) return 'rar'
-  if (starts(bytes, [0x4c, 0x5a, 0x49, 0x50])) return 'lzip'
+  if (isLzip(bytes)) return 'lzip'
   if (starts(bytes, [0x1f, 0x9d])) return 'compress'
-  if (starts(bytes, [0x4d, 0x53, 0x43, 0x46])) return 'cab'
+  if (isCab(bytes)) return 'cab'
   if (isTar(bytes)) return 'tar'
   if (findEndOfCentralDirectory(bytes) >= 0) return 'zip' // self-extracting or prefixed ZIP
   return 'unknown'
+}
+
+/**
+ * An lzip member header: "LZIP", version 1 and a valid coded dictionary size (4 KiB to 512 MiB:
+ * a power of two from 2^12 to 2^29, less 0-7 sixteenths of it). Four letters alone would also
+ * match a text file that starts with "LZIP".
+ */
+function isLzip(bytes: Uint8Array): boolean {
+  if (!starts(bytes, [0x4c, 0x5a, 0x49, 0x50, 0x01]) || bytes.length < 6) return false
+  const log = bytes[5] & 0x1f
+  return log >= 12 && log <= 29 && (log > 12 || bytes[5] >> 5 === 0)
+}
+
+const le32 = (b: Uint8Array, at: number) => (b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24)) >>> 0
+
+/**
+ * A Cabinet header (CFHEADER): "MSCF", its three reserved fields zero, format version 1.x and a
+ * cabinet at least as long as the 36-byte header. "MSCF" alone would also match a text file.
+ */
+function isCab(bytes: Uint8Array): boolean {
+  if (!starts(bytes, [0x4d, 0x53, 0x43, 0x46]) || bytes.length < 36) return false
+  return le32(bytes, 4) === 0 && le32(bytes, 12) === 0 && le32(bytes, 20) === 0 && bytes[25] === 1 && le32(bytes, 8) >= 36
 }
 
 /**
