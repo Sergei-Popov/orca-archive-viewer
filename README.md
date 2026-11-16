@@ -106,7 +106,7 @@ orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the e
 - `vendor/fflate/` — [fflate](https://github.com/101arrowz/fflate) 0.8.3 (MIT).
 - `vendor/fzstd/` — [fzstd](https://github.com/101arrowz/fzstd) 0.1.1 (MIT), patched (marked
   "Archive Viewer patch") so a streaming window slides without moving all of it after every
-  block.
+  block, and so a frame that records its size over 256 MB unpacks.
 - `tools/` — `rasterize-icons.sh` renders the icons from `images/icon.svg`;
   `make-listing-samples.py` builds the fictional demo archives and `listing.json` is the spec
   for the listing images, made with the hub's `scripts/listing-image.sh`.

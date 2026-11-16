@@ -336,6 +336,37 @@ test('unzstd unpacks a frame of known size in place and checks it against its bl
   assert.equal(cut.truncated, true)
 })
 
+/** A zstd frame of `count` RLE blocks of 128 KiB, recording its content size in 8 bytes. */
+function rleFrame(count: number, value: number): Uint8Array {
+  const out = new Uint8Array(4 + 1 + 1 + 8 + count * 4)
+  out.set([0x28, 0xb5, 0x2f, 0xfd, 0xc0, (20 - 10) << 3])
+  let size = count * 131072
+  for (let i = 0; i < 8; i++, size = Math.floor(size / 256)) out[6 + i] = size % 256
+  for (let i = 0; i < count; i++) {
+    const header = (i === count - 1 ? 1 : 0) | (1 << 1) | (131072 << 3)
+    out.set([header & 0xff, (header >> 8) & 0xff, header >> 16, value], 14 + i * 4)
+  }
+  return out
+}
+
+test('unzstd unpacks a frame that records a content size over 256 MiB', () => {
+  // fzstd compared its output buffer with `== 1`, which joined it into a string: past 256 MiB
+  // that threw "Invalid string length" and the file was called damaged; below, it was slow.
+  const frame = rleFrame(2400, 0x61)
+  assert.equal(zstdFrames(frame)[0].size, 2400 * 131072)
+  const started = Date.now()
+  const { bytes } = unzstd(frame, 512 * 1024 * 1024)
+  assert.equal(bytes.length, 2400 * 131072)
+  assert.equal(bytes[0], 0x61)
+  assert.equal(bytes[bytes.length - 1], 0x61)
+  assert.equal(bytes[150 * 1024 * 1024], 0x61)
+  const medium = rleFrame(512, 0x62)
+  const time = Date.now()
+  assert.equal(unzstd(medium, 64 * 1024 * 1024).bytes.length, 64 * 1024 * 1024)
+  assert.ok(Date.now() - time < 1500, `64 MiB took ${Date.now() - time} ms`)
+  assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`)
+})
+
 test('inflate fills the declared size, or streams up to the limit', () => {
   const plain = utf8('abc'.repeat(10000))
   const packed = gzipSync(plain).subarray(10, -8)
