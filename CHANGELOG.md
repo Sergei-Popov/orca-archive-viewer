@@ -36,6 +36,9 @@ All notable changes to this plugin are documented here. The format follows
   crafted `.tar.gz` used to freeze the tab for 20 seconds.
 - A TAR hard link reads the file it was made from, the last entry at its target path before the
   link, as tar does, instead of a later file with the same path in an appended archive.
+- A cut-off or damaged `.tar.bz2`, `.tar.xz` or `.tar.zst` (and a single `.bz2`, `.xz` or
+  `.zst` file) shows what could be read before the damage, with the damage notice, as `.tar.gz`
+  already did, instead of only "The archive is damaged".
 - A `.zst` or `.tar.zst` frame that records a content size over 256 MB (what `zstd file.tar`
   writes) opens instead of being called damaged, and smaller ones open several times faster:
   fzstd compared its output buffer with `== 1`, which turned the buffer into a string.

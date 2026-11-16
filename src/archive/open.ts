@@ -5,7 +5,7 @@ import { bunzip2 } from '../codecs/bzip2'
 import { gunzip, gzipHeader } from '../codecs/deflate'
 import { DamagedError } from '../codecs/sink'
 import { unxz } from '../codecs/xz'
-import { unzstd } from '../codecs/zstd'
+import { MAX_ZSTD_WINDOW, unzstd } from '../codecs/zstd'
 import { type Magic, detect, isTar } from './detect'
 import { type Archive, EntryError } from './model'
 import { type LegacyEncoding, baseName, decodeName } from './names'
@@ -76,13 +76,15 @@ export async function openArchive(bytes: Uint8Array, options: OpenOptions): Prom
     throw new NotArchiveError()
   }
 
-  let inner: Uint8Array
-  // GZIP keeps what it unpacked before damage (a cut download) and says so.
-  let damaged = false
-  if (magic === 'gzip') ({ bytes: inner, damaged } = gunzip(bytes, limit))
-  else if (magic === 'bzip2') inner = bunzip2(bytes, limit).bytes
-  else if (magic === 'xz') inner = unxz(bytes, limit).bytes
-  else inner = unzstd(bytes, limit).bytes
+  // Every decoder keeps what it unpacked before damage (a cut download) and says so.
+  const { bytes: inner, damaged } =
+    magic === 'gzip'
+      ? gunzip(bytes, limit)
+      : magic === 'bzip2'
+        ? bunzip2(bytes, limit, false, true)
+        : magic === 'xz'
+          ? unxz(bytes, limit, false, true)
+          : unzstd(bytes, limit, false, MAX_ZSTD_WINDOW, true)
 
   if (isTar(inner)) {
     return parseTar(inner, options.encoding, `TAR + ${label}`, bytes.length, damaged)

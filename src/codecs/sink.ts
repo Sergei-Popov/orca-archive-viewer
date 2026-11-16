@@ -89,6 +89,12 @@ export class Sink {
   }
 }
 
+/**
+ * A stream decoder's output. `damaged`: with `partial` set, damage came after some output, which
+ * is what came before it; without `partial` damage throws `DamagedError`.
+ */
+export type StreamResult = { bytes: Uint8Array; truncated: boolean; damaged: boolean }
+
 /** Feeds `data` to `push` in slices so a capped sink can stop a decoder early. */
 export function feed(
   data: Uint8Array,

@@ -367,6 +367,39 @@ test('unzstd unpacks a frame that records a content size over 256 MiB', () => {
   assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`)
 })
 
+test('with partial set, bunzip2, unxz and unzstd return what came before damage', () => {
+  const data = randomBytes(250000, 5)
+  // bzip2: the blocks that passed their CRC, not the damaged one.
+  const packed = bzip2(data, { level: 1 })
+  const flipped = packed.slice()
+  flipped[Math.floor(packed.length * 0.6)] ^= 0xff
+  assertDamaged(() => bunzip2(flipped, 1 << 20), 'a changed byte')
+  const kept = bunzip2(flipped, 1 << 20, false, true)
+  assert.equal(kept.damaged, true)
+  assert.ok(kept.bytes.length >= 90000 && kept.bytes.length < data.length, `${kept.bytes.length}`)
+  assert.deepEqual(kept.bytes, data.subarray(0, kept.bytes.length))
+  assert.equal(bunzip2(packed, 1 << 20, false, true).damaged, false)
+  // zstd: frames before junk, and the whole blocks of a cut frame.
+  const frame = zstd(data)
+  const junk = unzstd(concat(frame, utf8('junk after the frame')), 1 << 20, false, undefined, true)
+  assert.equal(junk.damaged, true)
+  assert.deepEqual(junk.bytes, data)
+  assertDamaged(() => unzstd(concat(frame, utf8('junk after the frame')), 1 << 20), 'junk')
+  const cut = unzstd(frame.subarray(0, frame.length - 1000), 1 << 20, false, undefined, true)
+  assert.equal(cut.damaged, true)
+  assert.deepEqual(cut.bytes, data.subarray(0, cut.bytes.length))
+  assert.ok(cut.bytes.length >= 131072, `${cut.bytes.length}`)
+  // xz: what was decoded before the cut.
+  const stream = xz(data)
+  const part = unxz(stream.subarray(0, Math.floor(stream.length / 2)), 1 << 20, false, true)
+  assert.equal(part.damaged, true)
+  assert.deepEqual(part.bytes, data.subarray(0, part.bytes.length))
+  assert.ok(part.bytes.length > 50000, `${part.bytes.length}`)
+  // Nothing before the damage still throws.
+  assertDamaged(() => unxz(stream.subarray(0, 30), 1 << 20, false, true), 'a header only')
+  assertDamaged(() => unzstd(frame.subarray(0, 6), 1 << 20, false, undefined, true), 'a header only')
+})
+
 test('inflate fills the declared size, or streams up to the limit', () => {
   const plain = utf8('abc'.repeat(10000))
   const packed = gzipSync(plain).subarray(10, -8)

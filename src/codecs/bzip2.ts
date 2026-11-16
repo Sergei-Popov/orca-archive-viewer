@@ -3,7 +3,7 @@
 // concatenated streams (pbzip2) and checks each block's CRC; randomised blocks (bzip2 0.9.0, 1998)
 // are refused.
 
-import { DamagedError, Sink, asDecodeError } from './sink'
+import { DamagedError, Sink, type StreamResult, asDecodeError } from './sink'
 
 const MAX_CODE_LENGTH = 20
 const GROUP_SIZE = 50
@@ -114,18 +114,17 @@ function crcTableBE(): Uint32Array {
   return (crcTable = t)
 }
 
-/** Every stream of bzip2 data, joined; `truncate` keeps the first `limit` bytes instead of throwing. */
-export function bunzip2(
-  data: Uint8Array,
-  limit: number,
-  truncate = false
-): { bytes: Uint8Array; truncated: boolean } {
+/**
+ * Every stream of bzip2 data, joined; `truncate` keeps the first `limit` bytes instead of throwing.
+ * `partial`: damaged or cut-off data returns the blocks that passed their CRC before the damage.
+ */
+export function bunzip2(data: Uint8Array, limit: number, truncate = false, partial = false): StreamResult {
   const sink = new Sink(limit, truncate)
+  // The block buffer (3.6 MB at level 9) is made on the first block and shared by every
+  // stream, so many empty streams cost nothing.
+  const scratch: Scratch = { tt: null, good: 0 }
   try {
     const r = new BitReader(data)
-    // The block buffer (3.6 MB at level 9) is made on the first block and shared by every
-    // stream, so many empty streams cost nothing.
-    const scratch: Scratch = { tt: null }
     let streams = 0
     while (!sink.full) {
       if (streams > 0) {
@@ -146,12 +145,17 @@ export function bunzip2(
       streams++
     }
   } catch (error) {
-    throw asDecodeError(error, 'bzip2')
+    const failure = asDecodeError(error, 'bzip2')
+    if (partial && failure instanceof DamagedError && scratch.good > 0) {
+      return { bytes: sink.result().subarray(0, scratch.good), truncated: false, damaged: true }
+    }
+    throw failure
   }
-  return { bytes: sink.result(), truncated: sink.full }
+  return { bytes: sink.result(), truncated: sink.full, damaged: false }
 }
 
-type Scratch = { tt: Uint32Array | null }
+/** `good`: output bytes of the blocks that passed their CRC. */
+type Scratch = { tt: Uint32Array | null; good: number }
 
 function decodeStream(r: BitReader, blockMax: number, sink: Sink, scratch: Scratch): void {
   for (;;) {
@@ -161,6 +165,7 @@ function decodeStream(r: BitReader, blockMax: number, sink: Sink, scratch: Scrat
     if (hi === 0x314159 && lo === 0x265359) {
       if (!scratch.tt || scratch.tt.length < blockMax) scratch.tt = new Uint32Array(blockMax)
       decodeBlock(r, scratch.tt, blockMax, sink, crc)
+      scratch.good = sink.total
       if (sink.full) return
     } else if (hi === 0x177245 && lo === 0x385090) {
       return
