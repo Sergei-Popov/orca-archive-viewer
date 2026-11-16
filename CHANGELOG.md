@@ -83,7 +83,7 @@ All notable changes to this plugin are documented here. The format follows
   fzstd compared its output buffer with `== 1`, which turned the buffer into a string.
 - A file that starts with 1 KB of zeros and then has data (ext4 and other disk images, ISOs) is
   the single file of its `.gz`, `.xz` or `.zst` and a hex dump inside an archive, not an empty
-  TAR; zeros are an empty TAR only when nothing else follows.
+  TAR; zeros are an empty TAR only when nothing but zeros or a TAR header follows.
 - A 7-Zip, RAR, lzip, `.Z` or `.cab` file inside an archive shows "… archives are not
   supported" above its hex dump, as the README promised, instead of only the hex dump.
 - The ZIP method "Stored" is translated (Russian "Без сжатия").
