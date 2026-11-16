@@ -1,6 +1,6 @@
 # Archive Viewer for Orca
 
-![Archive Viewer in an Orca tab](images/cover.png)
+![Archive Viewer: a ZIP's folder tree and the selected image's details](images/cover.png)
 
 Browse archives in [Orca](https://orca.dev)'s editor tabs — opened from the file tree, a file
 link in an agent chat, or `orca file open`. Without the plugin Orca shows "Binary file — cannot
@@ -86,7 +86,7 @@ orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the e
 
 - `src/editor.ts` — the custom editor entry: bytes document → `openArchive` → view.
 - `src/view.ts` — toolbar, virtualized tree and preview; `src/styles.ts`, `src/icons.ts`,
-  `src/i18n.ts`, `src/dom.ts`.
+  `src/i18n.ts`, `src/dom.ts`, `src/focus.ts` (the tree's focus ring is for the keyboard).
 - `src/archive/` — format detection and readers: `zip.ts`, `tar.ts`, `open.ts` (compressed
   streams), `names.ts` (code pages), `model.ts`.
 - `src/codecs/` — Deflate and GZIP (fflate), Zstandard (fzstd), XZ (WebAssembly), and bzip2
@@ -105,6 +105,9 @@ orca plugin shot local.archive-viewer --editor path/to/file.zip   # PNG of the e
 - `vendor/xz/` — the WebAssembly build of [XZ Embedded](https://tukaani.org/xz/embedded.html)
   (public domain) from [xz-decompress](https://github.com/httptoolkit/xz-decompress) 0.2.3
   (MIT), base64-encoded so the tab loads it without a request.
+- `tools/` — `rasterize-icons.sh` renders the icons from `images/icon.svg`;
+  `make-listing-samples.py` builds the fictional demo archives and `listing.json` is the spec
+  for the listing images, made with the hub's `scripts/listing-image.sh`.
 
 Branches follow git-flow: `feature/*` from `develop`, releases through `release/x.y.z` into
 `main`, tagged `vX.Y.Z`. Only the maintainers push and open pull requests.

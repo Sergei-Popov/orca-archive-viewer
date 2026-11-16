@@ -7,6 +7,17 @@ All notable changes to this plugin are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Listing images and description: a new cover and five screenshots in the hub's house
+  style, made from fictional demo archives (`tools/make-listing-samples.py`,
+  `tools/listing.json`); a full-bleed plugin and tab icon; the description fits orca.dev's
+  300 characters.
+
+### Fixed
+
+- The file tree no longer keeps its keyboard focus ring after mouse clicks.
+
 ## [0.1.0] - 2026-11-14
 
 ### Added
